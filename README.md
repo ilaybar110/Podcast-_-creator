@@ -28,6 +28,25 @@ instead of robotic ones like "Carmit". You see the **exact length** of the podca
   long dead air) are re-recorded. The finished podcast gets a *humanness score* based on intonation
   movement, pause variety and dynamics. Flat, robotic speech scores low.
 
+## Use it from your phone (GitHub Pages)
+
+The `docs/` folder is a **browser-only edition** that needs no server, so it can be hosted free on
+GitHub Pages and used from a phone:
+
+- Your Gemini key is stored only in your browser and sent only to Google.
+- Voice recording, quality checks, warm mastering, loudness and MP3 encoding all run on your device
+  (lamejs encoder, bundled).
+- The same voice direction as the server: `docs/js/prompts_data.js` is generated from `app/prompts.py`
+  by `python -m tools.build_web`, and a test fails if they drift apart.
+- The same free-tier guard, length estimate, exact final duration and two-host mode.
+- Long podcasts are saved part by part on the device, so a pause (quota, or closing the page)
+  continues where it stopped.
+- Gemini only: the Microsoft and ElevenLabs engines need the Python server.
+
+**Turn it on:** Repository **Settings → Pages → Build and deployment → Source: Deploy from a branch**,
+choose branch `claude/podcast-creator-app` and folder **`/docs`**, then **Save**. After a minute the app
+is live at <https://ilaybar110.github.io/Podcast-_-creator/>.
+
 ## Is it free? (checked before you click "Create")
 
 Next to the length estimate, a badge shows whether the podcast will cost money:

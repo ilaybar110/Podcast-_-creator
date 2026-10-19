@@ -373,3 +373,29 @@ def test_estimate_and_start_report_free_status(client, ledger):
     r = client.post("/api/jobs", json={"text": "שלום", "provider": "gemini", "billing": True},
                     headers={"X-Gemini-Key": "k"})
     assert r.status_code == 402
+
+
+# ------------------------------------------------- browser edition (GitHub Pages)
+def test_web_prompts_in_sync_with_python():
+    from tools import build_web
+    assert build_web.OUT.read_text(encoding="utf-8") == build_web.render(), \
+        "docs/js/prompts_data.js is stale: run `python -m tools.build_web`"
+
+
+def test_web_chunking_matches_python():
+    import json
+    import shutil
+    import subprocess
+    from pathlib import Path
+    if not shutil.which("node"):
+        pytest.skip("node not installed")
+    samples = [
+        "\n\n".join(f"פסקה {i}. " + "משפט בדיקה ארוך, עם פסיקים; וגם ״ציטוט.״ " * (i % 9 + 1) for i in range(60)),
+        "Short intro, " + "word " * 900 + "end.",
+        "# Title\n\nIntro line that wraps\nonto the next line.\n\n- bullet one\n- bullet two\n\n" + "x" * 5000,
+    ]
+    js = Path(__file__).resolve().parent.parent / "docs" / "js" / "text.js"
+    script = (f"import('{js.as_posix()}').then(m => {{ const s = JSON.parse(require('fs').readFileSync(0, 'utf8'));"
+              "process.stdout.write(JSON.stringify(s.map(t => m.chunkText(m.cleanText(t), 1500)))); })")
+    out = subprocess.run(["node", "-e", script], input=json.dumps(samples), capture_output=True, text=True, check=True)
+    assert json.loads(out.stdout) == [chunk_text(clean_text(t), 1500) for t in samples]

@@ -1,0 +1,171 @@
+// Audio in the browser: take checks, trimming, warm mastering and MP3 encoding
+// (port of app/audio.py + app/quality.py). Parts live in IndexedDB so long podcasts
+// don't have to fit in a phone's memory, and paused jobs survive closing the page.
+import { CHARS_PER_SECOND } from "./text.js";
+
+export const SAMPLE_RATE = 24000;
+
+export function resample(pcm, src, dst = SAMPLE_RATE) {
+  if (src === dst || !pcm.length) return pcm;
+  const n = Math.round(pcm.length * dst / src);
+  const out = new Int16Array(n);
+  const ratio = (pcm.length - 1) / Math.max(1, n - 1);
+  for (let i = 0; i < n; i++) {
+    const x = i * ratio, j = Math.floor(x), f = x - j;
+    out[i] = pcm[j] * (1 - f) + (pcm[Math.min(j + 1, pcm.length - 1)] || 0) * f;
+  }
+  return out;
+}
+
+function frameDb(pcm, win) {
+  const n = Math.floor(pcm.length / win);
+  const db = new Float32Array(n);
+  for (let f = 0; f < n; f++) {
+    let s = 0;
+    for (let i = f * win; i < (f + 1) * win; i++) { const v = pcm[i] / 32768; s += v * v; }
+    db[f] = 20 * Math.log10(Math.sqrt(s / win) + 1e-9);
+  }
+  return db;
+}
+
+/** Trim leading/trailing silence so the pauses we insert are consistent. */
+export function trimSilence(pcm, thresholdDb = -45, keepSec = 0.06) {
+  const win = SAMPLE_RATE * 0.02;
+  const db = frameDb(pcm, win);
+  let first = -1, last = -1;
+  for (let i = 0; i < db.length; i++) if (db[i] > thresholdDb) { if (first < 0) first = i; last = i; }
+  if (first < 0) return pcm.subarray(0, 0);
+  const keep = SAMPLE_RATE * keepSec;
+  return pcm.slice(Math.max(0, first * win - keep), Math.min(pcm.length, (last + 1) * win + keep));
+}
+
+export function fade(pcm, ms = 8) {
+  const n = Math.min(Math.floor(SAMPLE_RATE * ms / 1000), pcm.length >> 1);
+  const out = pcm.slice();
+  for (let i = 0; i < n; i++) { const g = i / n; out[i] *= g; out[out.length - 1 - i] *= g; }
+  return out;
+}
+
+export function silence(sec) { return new Int16Array(Math.floor(SAMPLE_RATE * sec)); }
+
+export function concat(arrays) {
+  const out = new Int16Array(arrays.reduce((s, a) => s + a.length, 0));
+  let o = 0;
+  for (const a of arrays) { out.set(a, o); o += a.length; }
+  return out;
+}
+
+/** Reasons to reject a synthesized take and ask for another one. */
+export function takeProblems(pcm, text, language) {
+  const problems = [];
+  const duration = pcm.length / SAMPLE_RATE;
+  const expected = text.length / (CHARS_PER_SECOND[language] || 14);
+  if (duration < 0.4 * expected) problems.push(`too short (${duration.toFixed(1)}s for ~${Math.round(expected)}s of text) - likely truncated`);
+  if (expected > 3 && duration > 2.6 * expected) problems.push(`too long (${duration.toFixed(1)}s for ~${Math.round(expected)}s of text)`);
+  if (duration > 8) {
+    const db = frameDb(pcm, SAMPLE_RATE * 0.01);
+    const sorted = Float32Array.from(db).sort();
+    const floor = sorted[Math.floor(sorted.length * 0.9)] - 30;
+    let run = 0, longest = 0;
+    for (const v of db) { run = v < floor ? run + 1 : 0; longest = Math.max(longest, run); }
+    if (longest * 0.01 > 4) problems.push(`dead air of ${(longest * 0.01).toFixed(1)}s`);
+  }
+  return problems;
+}
+
+// ------------------------------------------------------------------ mastering
+/** Gentle "radio warm" chain: rumble cut, low-mid body, softer sibilance, soft compression. */
+export async function masterPart(pcm) {
+  const ctx = new OfflineAudioContext(2, Math.max(1, pcm.length), SAMPLE_RATE);
+  const buf = ctx.createBuffer(1, Math.max(1, pcm.length), SAMPLE_RATE);
+  const ch = buf.getChannelData(0);
+  for (let i = 0; i < pcm.length; i++) ch[i] = pcm[i] / 32768;
+  const src = ctx.createBufferSource();
+  src.buffer = buf;
+  const hp = Object.assign(ctx.createBiquadFilter(), { type: "highpass" }); hp.frequency.value = 70;
+  const body = Object.assign(ctx.createBiquadFilter(), { type: "peaking" }); body.frequency.value = 180; body.Q.value = 1; body.gain.value = 1.5;
+  const harsh = Object.assign(ctx.createBiquadFilter(), { type: "peaking" }); harsh.frequency.value = 3200; harsh.Q.value = 1.2; harsh.gain.value = -1;
+  const sibil = Object.assign(ctx.createBiquadFilter(), { type: "highshelf" }); sibil.frequency.value = 6500; sibil.gain.value = -1.5;
+  const comp = ctx.createDynamicsCompressor();
+  comp.threshold.value = -20; comp.ratio.value = 2.2; comp.attack.value = 0.015; comp.release.value = 0.18; comp.knee.value = 6;
+  // Channel 0: the mastered audio. Channel 1: the same audio K-weighted (ITU-R BS.1770), used
+  // only to measure loudness the way podcast platforms do.
+  const merge = ctx.createChannelMerger(2);
+  src.connect(hp).connect(body).connect(harsh).connect(sibil).connect(comp);
+  comp.connect(merge, 0, 0);
+  const kShelf = Object.assign(ctx.createBiquadFilter(), { type: "highshelf" }); kShelf.frequency.value = 1681; kShelf.gain.value = 4;
+  const kHp = Object.assign(ctx.createBiquadFilter(), { type: "highpass" }); kHp.frequency.value = 38; kHp.Q.value = 0.5;
+  comp.connect(kShelf).connect(kHp).connect(merge, 0, 1);
+  merge.connect(ctx.destination);
+  src.start();
+  const out = await ctx.startRendering();
+  return { audio: out.getChannelData(0), kweighted: out.getChannelData(1) };
+}
+
+/** Accumulates gated 400 ms block energy of K-weighted audio (EBU R128 gating) across parts. */
+export class LoudnessMeter {
+  constructor() { this.blocks = []; }
+  add(samples) {
+    const win = SAMPLE_RATE * 0.4;
+    for (let i = 0; i + win <= samples.length; i += win) {
+      let s = 0;
+      for (let j = i; j < i + win; j++) s += samples[j] * samples[j];
+      this.blocks.push(s / win);
+    }
+  }
+  integratedDb() {
+    const lufs = (e) => -0.691 + 10 * Math.log10(e + 1e-12);
+    const abs = this.blocks.filter((e) => lufs(e) > -70);
+    if (!abs.length) return -70;
+    const mean = abs.reduce((a, b) => a + b, 0) / abs.length;
+    const rel = abs.filter((e) => lufs(e) > lufs(mean) - 10);
+    return -0.691 + 10 * Math.log10(rel.reduce((a, b) => a + b, 0) / rel.length);
+  }
+}
+
+export function startEncoder(kbps = 96) {
+  const worker = new Worker(new URL("./encoder-worker.js", import.meta.url));
+  worker.postMessage({ cmd: "init", rate: SAMPLE_RATE, kbps });
+  return {
+    push(samples, gain) { worker.postMessage({ cmd: "chunk", samples, gain }, [samples.buffer]); },
+    finish() {
+      return new Promise((resolve, reject) => {
+        worker.onmessage = (e) => { worker.terminate(); resolve(new Blob(e.data.parts, { type: "audio/mpeg" })); };
+        worker.onerror = (e) => { worker.terminate(); reject(new Error(e.message || "MP3 encoder failed")); };
+        worker.postMessage({ cmd: "end" });
+      });
+    },
+  };
+}
+
+// ------------------------------------------------------------------ storage
+function db() {
+  return new Promise((resolve, reject) => {
+    const req = indexedDB.open("podcast-creator", 1);
+    req.onupgradeneeded = () => {
+      req.result.createObjectStore("jobs", { keyPath: "id" });
+      req.result.createObjectStore("parts");
+    };
+    req.onsuccess = () => resolve(req.result);
+    req.onerror = () => reject(req.error);
+  });
+}
+async function tx(store, mode, fn) {
+  const d = await db();
+  return new Promise((resolve, reject) => {
+    const t = d.transaction(store, mode);
+    const req = fn(t.objectStore(store));
+    t.oncomplete = () => resolve(req?.result);
+    t.onerror = () => reject(t.error);
+  });
+}
+export const store = {
+  putPart: (jobId, i, pcm) => tx("parts", "readwrite", (s) => s.put(pcm, `${jobId}/${i}`)),
+  getPart: (jobId, i) => tx("parts", "readonly", (s) => s.get(`${jobId}/${i}`)),
+  hasPart: async (jobId, i) => (await tx("parts", "readonly", (s) => s.count(`${jobId}/${i}`))) > 0,
+  saveJob: (job) => tx("jobs", "readwrite", (s) => s.put(job)),
+  loadJob: (id) => tx("jobs", "readonly", (s) => s.get(id)),
+  async deleteParts(jobId) {
+    await tx("parts", "readwrite", (s) => s.delete(IDBKeyRange.bound(`${jobId}/`, `${jobId}/￿`)));
+  },
+};
