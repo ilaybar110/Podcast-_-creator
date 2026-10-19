@@ -2,7 +2,7 @@
 <html lang="he" dir="rtl">
 <head>
   <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
   <meta name="description" content="Turn any text into a warm, human-sounding Hebrew or English podcast MP3 - free.">
   <title>Podcast Creator</title>
   <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22%3E%3Ctext y=%22.9em%22 font-size=%2290%22%3E🎙%3C/text%3E%3C/svg%3E">
@@ -29,19 +29,19 @@
   <section class="card" id="keyCard" hidden>
     <h2><span class="step">🔑</span> <span data-i18n="keyTitle">חיבור חד-פעמי: מפתח Gemini חינמי</span></h2>
     <ol class="steps">
-      <li data-i18n-html="keyStep1">היכנסו ל-<a href="https://aistudio.google.com/apikey" target="_blank" rel="noopener">aistudio.google.com/apikey</a> עם חשבון Google.</li>
-      <li data-i18n="keyStep2">לחצו "Create API key" והעתיקו את המפתח. עדיף בפרויקט בלי חיוב (Billing) — כך אי אפשר לחייב אתכם.</li>
-      <li data-i18n="keyStep3">הדביקו אותו כאן. המפתח נשמר רק בטלפון שלכם ונשלח ישירות ל-Google.</li>
+      <li data-i18n-html="keyStep1">היכנסו ל-<bdi dir="ltr"><a href="https://aistudio.google.com/apikey" target="_blank" rel="noopener">aistudio.google.com/apikey</a></bdi> עם חשבון <bdi>Google</bdi>.</li>
+      <li data-i18n-html="keyStep2">לחצו <bdi dir="ltr">"Create API key"</bdi> והעתיקו את המפתח. עדיף בפרויקט בלי חיוב (<bdi>Billing</bdi>) — כך אי אפשר לחייב אתכם.</li>
+      <li data-i18n-html="keyStep3">הדביקו אותו כאן. המפתח נשמר רק בטלפון שלכם ונשלח ישירות ל-<bdi>Google</bdi>.</li>
     </ol>
     <div class="row">
-      <input id="keyInput" type="password" dir="ltr" autocomplete="off" placeholder="AIza...">
+      <input id="keyInput" type="password" dir="ltr" autocomplete="off" placeholder="AIza..." data-i18n-aria="geminiKeyAria">
       <button class="primary small-primary" id="keySave" data-i18n="save">שמירה</button>
     </div>
-    <div id="keyMsg" class="hint"></div>
+    <div id="keyMsg" class="hint" aria-live="polite"></div>
   </section>
 
   <section class="card">
-    <div class="seg src-seg" id="srcSeg">
+    <div class="seg src-seg" id="srcSeg" role="group" data-i18n-aria="srcAria">
       <button data-v="text" class="on" data-i18n="srcText">מטקסט שלי</button>
       <button data-v="topic" data-i18n="srcTopic">מנושא (מחקר מהאינטרנט)</button>
     </div>
@@ -50,17 +50,17 @@
   <section class="card" id="topicCard" hidden>
     <h2><span class="step">1</span> <span data-i18n="topicTitle">הנושא</span></h2>
     <div class="row topic-row">
-      <input id="topic" type="text" dir="auto" data-i18n-placeholder="topicPlaceholder">
+      <input id="topic" type="text" dir="auto" data-i18n-placeholder="topicPlaceholder" data-i18n-aria="topicTitle">
       <button class="primary small-primary" id="researchBtn" data-i18n="findSources">חיפוש מקורות</button>
     </div>
     <p class="hint" data-i18n="topicHint"></p>
-    <div id="researchStatus" class="hint" hidden></div>
+    <div id="researchStatus" class="hint" aria-live="polite" hidden></div>
     <div id="researchOut" hidden>
       <p id="resSummary" class="summary" dir="auto"></p>
       <div class="field">
-        <label data-i18n="focusTitle">על מה להתמקד?</label>
-        <div class="angles" id="angles"></div>
-        <input id="customFocus" type="text" dir="auto" data-i18n-placeholder="customFocus">
+        <label id="focusLbl" data-i18n="focusTitle">על מה להתמקד?</label>
+        <div class="angles" id="angles" role="group" aria-labelledby="focusLbl"></div>
+        <input id="customFocus" type="text" dir="auto" data-i18n-placeholder="customFocus" data-i18n-aria="customFocus">
       </div>
       <div class="field">
         <label for="minutes"><span data-i18n="lengthLabel">אורך הפודקאסט</span>: <b id="minutesOut" class="minutes-out">8</b></label>
@@ -72,7 +72,7 @@
         <ol id="sourceList" dir="auto"></ol>
       </details>
     </div>
-    <div id="topicBadge" class="free-badge" hidden></div>
+    <div id="topicBadge" class="free-badge" aria-live="polite" hidden></div>
   </section>
 
   <section class="card" id="textCard">
@@ -84,79 +84,91 @@
       </label>
     </div>
     <div id="dropZone" class="drop">
-      <textarea id="text" dir="auto" spellcheck="false" data-i18n-placeholder="placeholder"></textarea>
+      <textarea id="text" dir="auto" spellcheck="false" data-i18n-placeholder="placeholder" data-i18n-aria="step1"></textarea>
     </div>
     <div class="stats">
       <span><b id="statChars">0</b> <span data-i18n="chars">תווים</span></span>
       <span><b id="statWords">0</b> <span data-i18n="words">מילים</span></span>
       <span class="est"><span data-i18n="estimate">אורך משוער</span>: <b id="statEst">0:00</b></span>
     </div>
-    <div id="freeBadge" class="free-badge" hidden></div>
+    <div id="freeBadge" class="free-badge" aria-live="polite" hidden></div>
   </section>
 
   <section class="card">
     <h2><span class="step">2</span> <span data-i18n="step2">הקול</span></h2>
     <div class="row">
       <div class="field">
-        <label data-i18n="language">שפת הפודקאסט</label>
-        <div class="seg" id="langSeg">
-          <button data-v="he" class="on">עברית</button>
-          <button data-v="en">English</button>
+        <label id="langLbl" data-i18n="language">שפת הפודקאסט</label>
+        <div class="seg" id="langSeg" role="group" aria-labelledby="langLbl">
+          <button type="button" data-v="he" class="on">עברית</button>
+          <button type="button" data-v="en">English</button>
         </div>
       </div>
       <div class="field">
-        <label data-i18n="format">פורמט</label>
-        <div class="seg" id="modeSeg">
-          <button data-v="narrator" class="on" data-i18n="narrator">קריין אחד</button>
-          <button data-v="conversation" data-i18n="conversation">שיחה בין שני מגישים</button>
+        <label id="modeLbl" data-i18n="format">פורמט</label>
+        <div class="seg" id="modeSeg" role="group" aria-labelledby="modeLbl">
+          <button type="button" data-v="narrator" class="on" data-i18n="narrator">קריין אחד</button>
+          <button type="button" data-v="conversation" data-i18n="conversation">שיחה בין שני מגישים</button>
         </div>
       </div>
     </div>
     <p class="hint" id="modeHint"></p>
-    <div class="field">
-      <label data-i18n="voice">בחרו קול</label>
-      <div class="voices" id="voices"></div>
-    </div>
-    <div class="field" id="voice2Wrap" hidden>
-      <label data-i18n="voice2">קול המגיש/ה השני/ה</label>
-      <div class="voices" id="voices2"></div>
-    </div>
-    <div class="row">
+    <details class="voice-sum" id="voiceDetails">
+      <summary>
+        <span class="sum-text"><span id="voiceSummary" class="sum-val"></span></span>
+        <span class="sum-change"><span class="when-closed" data-i18n="change">שינוי</span><span class="when-open" data-i18n="done">סגירה</span></span>
+      </summary>
       <div class="field">
-        <label data-i18n="style">סגנון</label>
-        <div class="chips" id="styles"></div>
+        <label id="voiceLbl" data-i18n="voice">בחרו קול</label>
+        <div class="voices" id="voices" role="radiogroup" aria-labelledby="voiceLbl"></div>
       </div>
-      <div class="field">
-        <label data-i18n="pace">קצב</label>
-        <div class="seg" id="paceSeg">
-          <button data-v="relaxed" data-i18n="relaxed">רגוע</button>
-          <button data-v="natural" class="on" data-i18n="natural">טבעי</button>
-          <button data-v="brisk" data-i18n="brisk">מהיר</button>
+      <div class="field" id="voice2Wrap" hidden>
+        <label id="voice2Lbl" data-i18n="voice2">קול המגיש/ה השני/ה</label>
+        <div class="voices" id="voices2" role="radiogroup" aria-labelledby="voice2Lbl"></div>
+      </div>
+      <p id="voiceMsg" class="hint voice-msg" aria-live="polite" hidden></p>
+      <button type="button" class="chip more-voices" id="voiceMore"></button>
+      <div class="row style-row">
+        <div class="field">
+          <label id="styleLbl" data-i18n="style">סגנון</label>
+          <div class="chips" id="styles" role="group" aria-labelledby="styleLbl"></div>
+        </div>
+        <div class="field">
+          <label id="paceLbl" data-i18n="pace">קצב</label>
+          <div class="seg" id="paceSeg" role="group" aria-labelledby="paceLbl">
+            <button type="button" data-v="relaxed" data-i18n="relaxed">רגוע</button>
+            <button type="button" data-v="natural" class="on" data-i18n="natural">טבעי</button>
+            <button type="button" data-v="brisk" data-i18n="brisk">מהיר</button>
+          </div>
         </div>
       </div>
-    </div>
+    </details>
     <div class="field">
       <label for="title" data-i18n="ptitle">שם הפרק</label>
       <input id="title" type="text" dir="auto">
     </div>
   </section>
 
-  <section class="card center">
-    <button id="generate" class="primary" data-i18n="generate">צרו את הפודקאסט</button>
-    <p class="hint keep-open" data-i18n="keepOpen">השאירו את הדף פתוח בזמן היצירה.</p>
-    <div id="progress" hidden>
-      <div class="bar"><div id="barFill"></div></div>
-      <div class="progress-row">
-        <span id="stage"></span>
-        <span><b id="pct">0%</b> · <span id="elapsed">0:00</span></span>
-      </div>
-      <button class="ghost small" id="cancel" data-i18n="cancel">ביטול</button>
+  <div class="genbar" id="genbar">
+    <div id="error" class="error" aria-live="polite" hidden></div>
+    <div class="gen-row">
+      <div id="genInfo" class="gen-info" aria-live="polite"></div>
+      <button id="generate" class="primary" data-i18n="generate">צרו את הפודקאסט</button>
     </div>
-    <div id="error" class="error" hidden></div>
-    <div id="paused" class="paused" hidden>
-      <p id="pausedText"></p>
-      <button class="primary" id="resumeBtn" data-i18n="resume">המשך יצירה</button>
+  </div>
+
+  <section class="card center run-card" id="progress" hidden>
+    <div class="lock-note" id="lockNote"></div>
+    <div class="bar" id="bar" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="1" data-i18n-aria="progressAria"><div id="barFill"></div></div>
+    <div class="progress-row">
+      <span id="stage" aria-live="polite"></span>
+      <span><b id="pct" aria-live="polite">0%</b> · <span id="elapsed">0:00</span></span>
     </div>
+    <button class="ghost small" id="cancel" data-i18n="cancel">ביטול</button>
+  </section>
+  <section class="card center run-card" id="paused" hidden>
+    <p id="pausedText"></p>
+    <button class="primary" id="resumeBtn" data-i18n="resume">המשך יצירה</button>
   </section>
 
   <section class="card result" id="result" hidden>
@@ -168,38 +180,41 @@
     <div class="meta" id="resMeta"></div>
     <audio id="player" controls preload="metadata"></audio>
     <div class="actions">
+      <button class="primary" id="share" hidden data-i18n="share">שיתוף / שמירה בקבצים</button>
       <a id="download" class="primary" href="#" data-i18n="download">הורדת MP3</a>
       <button class="ghost" id="showScript" hidden data-i18n="showScript">הצגת התסריט</button>
     </div>
+    <div id="shareMsg" class="hint" aria-live="polite" hidden></div>
     <div id="warnings" class="hint"></div>
     <div id="script" class="script" hidden dir="auto"></div>
   </section>
 </main>
 
 <footer class="foot">
-  <span data-i18n="privacy">הכול רץ בדפדפן שלכם. הטקסט והמפתח נשלחים רק ל-Google.</span>
-  · <a href="https://github.com/ilaybar110/Podcast-_-creator" target="_blank" rel="noopener">GitHub</a>
-  · MP3: <a href="vendor/lamejs-LICENSE.txt">lamejs (LGPL)</a>
+  <span data-i18n-html="privacy">הכול רץ בדפדפן שלכם. הטקסט והמפתח נשלחים רק ל-<bdi>Google</bdi>.</span>
+  · <a href="https://github.com/ilaybar110/Podcast-_-creator" target="_blank" rel="noopener"><bdi>GitHub</bdi></a>
+  · <bdi dir="ltr">MP3: <a href="vendor/lamejs-LICENSE.txt">lamejs (LGPL)</a></bdi>
 </footer>
 
 <dialog id="settings">
   <form method="dialog">
     <h2 data-i18n="settings">הגדרות</h2>
-    <label>Gemini API key <a href="https://aistudio.google.com/apikey" target="_blank" rel="noopener" data-i18n="getKey">(קבלת מפתח חינם)</a></label>
+    <div class="lbl-row"><label for="geminiKey" data-i18n-html="geminiKeyLabel">מפתח <bdi>Gemini API</bdi></label> <a href="https://aistudio.google.com/apikey" target="_blank" rel="noopener" data-i18n="getKey">(קבלת מפתח חינם)</a></div>
     <input id="geminiKey" type="password" dir="ltr" autocomplete="off">
     <h3 data-i18n="freeTitle">שמירה על מסלול חינמי</h3>
-    <label class="check"><input type="checkbox" id="freeOnly" checked> <span data-i18n="freeOnly"></span></label>
-    <label class="check"><input type="checkbox" id="billing"> <span data-i18n="billing"></span></label>
+    <label class="check" for="freeOnly"><input type="checkbox" id="freeOnly" checked> <span data-i18n="freeOnly"></span></label>
+    <label class="check" for="billing"><input type="checkbox" id="billing"> <span data-i18n="billing"></span></label>
     <p class="hint" data-i18n="billingHint"></p>
     <p class="hint"><span data-i18n="limitsHint"></span>
       <a href="https://aistudio.google.com/rate-limit" target="_blank" rel="noopener">aistudio.google.com/rate-limit</a></p>
     <div class="limits">
-      <label><span data-i18n="ttsPerDay"></span><input id="limTtsRpd" type="number" min="1" dir="ltr"></label>
-      <label><span data-i18n="ttsPerMin"></span><input id="limTtsRpm" type="number" min="1" dir="ltr"></label>
-      <label><span data-i18n="textPerDay"></span><input id="limTextRpd" type="number" min="1" dir="ltr"></label>
+      <label for="limTtsRpd"><span data-i18n="ttsPerDay"></span><input id="limTtsRpd" type="number" min="1" dir="ltr"></label>
+      <label for="limTtsRpm"><span data-i18n="ttsPerMin"></span><input id="limTtsRpm" type="number" min="1" dir="ltr"></label>
+      <label for="limTextRpd"><span data-i18n="textPerDay"></span><input id="limTextRpd" type="number" min="1" dir="ltr"></label>
     </div>
     <div class="actions">
       <button class="primary" id="saveSettings" value="save" data-i18n="save">שמירה</button>
+      <button class="ghost close-btn" id="closeSettings" value="cancel" formnovalidate data-i18n="close">סגירה</button>
     </div>
   </form>
 </dialog>
