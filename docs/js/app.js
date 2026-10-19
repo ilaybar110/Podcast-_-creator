@@ -45,6 +45,8 @@ const I18N = {
     fFree: "✓ <b>חינם</b> — ישתמש ב-{need} מתוך {left} בקשות קול חינמיות שנותרו היום.",
     fFreeScript: " + {need} בקשות לכתיבת התסריט (נותרו {left}).",
     fMinutes: "בגלל מגבלת {rpm} בקשות לדקה, היצירה תיקח לפחות ~{min} דק׳.",
+    fWait: "⏳ <b>מכסת הקול החינמית של היום נגמרה.</b> אפשר ללחוץ יצירה: ההקלטה תחכה לאיפוס ({reset}) ותמשיך מעצמה כשתלחצו \"המשך יצירה\" — בלי לשלם.",
+    confirmWait: "מכסת הקול החינמית של היום נגמרה. ההקלטה תחכה לאיפוס ותמשיכו אחריו ב\"המשך יצירה\". להתחיל?",
     fMulti: "⏳ <b>חינם, אבל דורש {days} ימים של מכסה חינמית.</b> היצירה תיעצר כשהמכסה תיגמר, ותוכלו להמשיך אחרי האיפוס ({reset}) — בלי לשלם.",
     fPaid: "💳 <b>בתשלום</b> — במפתח מוגדר חיוב, כך שכל בקשה עולה כסף.",
     fOff: " (מצב חינם בלבד כבוי — ייתכנו חיובים או שגיאות מכסה)",
@@ -180,6 +182,8 @@ const I18N = {
     fFree: "✓ <b>Free</b> — uses {need} of the {left} free voice requests left today.",
     fFreeScript: " + {need} requests to write the script ({left} left).",
     fMinutes: "Because of the {rpm} requests/minute limit, it will take at least ~{min} min.",
+    fWait: "⏳ <b>Today's free voice quota is used up.</b> You can press Create: recording waits for the reset ({reset}) and you continue with \"Continue\" — without paying.",
+    confirmWait: "Today's free voice quota is used up. Recording will wait for the reset, then you press \"Continue\". Start?",
     fMulti: "⏳ <b>Free, but needs {days} days of free quota.</b> It will pause when the quota runs out and you can continue after the reset ({reset}) — without paying.",
     fPaid: "💳 <b>Paid</b> — billing is enabled on this key, so every request costs money.",
     fOff: " (free-only mode is OFF — you may be charged or hit quota errors)",
@@ -569,6 +573,7 @@ function renderFree(f) {
   // `html` is a template from the I18N table with {placeholders} filled in by richNodes (no innerHTML).
   let cls = "ok", html;
   if (f.status === "paid") { cls = "bad"; html = t("fPaid"); }
+  else if (f.status === "free_multi_day" && tts.left_today === 0) { cls = "wait"; html = fmt(t("fWait"), { reset: resetTime(f.reset_at) }); }
   else if (f.status === "free_multi_day") { cls = "wait"; html = fmt(t("fMulti"), { days: f.days, reset: resetTime(f.reset_at) }); }
   else html = fmt(t("fFree"), { need: tts.needed + tts.reserve, left: tts.left_today });
   if (txt && f.status !== "paid") html += fmt(t("fFreeScript"), { need: txt.needed + txt.reserve, left: txt.left_today });
@@ -876,7 +881,7 @@ async function generate() {
   if (!key()) return showError(t("needKey"));
   const o = freeOpts();
   if (o.billing && o.freeOnly) return showError(t("paidBlocked"));
-  if (state.free?.status === "free_multi_day" && o.freeOnly && !confirm(fmt(t("confirmMulti"), { days: state.free.days }))) return;
+  if (state.free?.status === "free_multi_day" && o.freeOnly && !confirm(state.free.buckets.gemini_tts?.left_today === 0 ? t("confirmWait") : fmt(t("confirmMulti"), { days: state.free.days }))) return;
   const job = {
     id: Date.now().toString(36) + Math.random().toString(36).slice(2, 7), status: "running", warnings: [], script: null,
     request: { text, topic, language: state.lang, mode: state.mode, voice: state.voice, voice2: state.voice2,
