@@ -25,7 +25,7 @@ globalThis.Worker = class {
 };
 
 const A = await import(new URL("../docs/js/audio.js", import.meta.url));
-const { batchTurns, runJob } = await import(new URL("../docs/js/job.js", import.meta.url));
+const { batchTurns, runJob, planParts } = await import(new URL("../docs/js/job.js", import.meta.url));
 const { ProviderError, QuotaExhausted } = await import(new URL("../docs/js/gemini.js", import.meta.url));
 A.store.useMemory();
 
@@ -49,11 +49,12 @@ function fakeGemini({ freeOnly = true, take = () => 1, write = null, rpd = null 
     async writeText(prompt) {
       const n = calls.text++;
       if (write) { const r = write(n); if (r instanceof Error) throw r; }
-      return Array.from({ length: 6 }, (_, i) => `${i % 2 ? "Jack" : "Emma"}: Line ${n}.${i} about how memory ` +
+      return Array.from({ length: 6 }, (_, i) => `${i % 2 ? "Jack" : "Emma"}: Line ${n}.${i}.${lineNo++} about how memory ` +
         "shapes the stories we tell ourselves every single day.").join("\n");
     },
   };
 }
+let lineNo = 0;      // every written line is unique, so the recordings cache never answers for a different line
 const ui = { progress() {}, cancelled: () => false };
 const sentence = (i) => `This is sentence number ${i} about memory. `;
 let n = 0;
@@ -93,7 +94,7 @@ assert.ok(g.calls.tts <= 6, `used ${g.calls.tts} requests`);
 
 // free-only: retakes never eat the requests the other parts still need today -> pause instead
 g = fakeGemini({ take: () => 0.2, rpd: 2 });
-job = newJob([1, 2, 3, 4, 5, 6, 7, 8].map(sentence).join(""));
+job = newJob([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16].map(sentence).join(""));
 await assert.rejects(runJob(job, g, ui), QuotaExhausted);
 assert.equal(g.calls.tts, 1);
 
@@ -148,4 +149,98 @@ assert.equal(await A.store.hasPart("keep", 0), true);
 assert.equal(await A.store.hasPart("preview", "Sulafat|en"), true);
 assert.equal(await A.store.hasPart(job.id, "mp3"), true);
 assert.equal(await A.store.loadJob("old"), undefined);
+// ---- recordings cache: the same passage is never recorded twice, even in another job
+await A.store.clearCache();
+const prose = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12].map(sentence).join("");
+g = fakeGemini();
+job = newJob(prose);
+await runJob(job, g, ui);
+const first = g.calls.tts;
+assert.ok(first >= 2, `needs several parts, used ${first}`);
+assert.equal(job.reused || 0, 0);
+g = fakeGemini();
+let job2 = newJob(prose);
+const res2 = await runJob(job2, g, ui);
+assert.notEqual(job2.id, job.id);
+assert.equal(g.calls.tts, 0, "a cache hit makes no request");
+assert.equal(res2.reused, first);
+assert.match(job2.warnings.join(" "), new RegExp(`Reused ${first} recordings.*no quota used`));
+assert.equal(job2.status, "done");
+assert.ok((await A.store.getPart(job2.id, "mp3")).size > 0, "the podcast is complete");
+// planParts sees them as cached; a different voice or style is a different recording
+const plan0 = await planParts(newJob(prose), { model: "m", chunkChars: 200 });
+assert.equal(plan0.cached, 0, "the model is part of the key");
+g = fakeGemini();
+g.ttsModel = async () => "tts-1";
+await runJob(newJob(prose), g, ui);
+assert.equal(g.calls.tts, first, "another voice model is another recording");
+const same = newJob(prose);
+const plan1 = await planParts(same, { model: "tts-1", chunkChars: 200 });
+assert.deepEqual([plan1.ttsParts, plan1.cached, plan1.alreadyDone], [first, first, 0]);
+const other = newJob(prose); other.request.voice = "Puck";
+assert.equal((await planParts(other, { model: "tts-1", chunkChars: 200 })).cached, 0);
+const other2 = newJob(prose); other2.request.style = "calm";
+g = fakeGemini(); g.ttsModel = async () => "tts-1";
+await runJob(other2, g, ui);
+assert.equal(g.calls.tts, first, "another style is another recording");
+// a take kept with problems (here: too long) is not cached
+await A.store.clearCache();
+g = fakeGemini({ take: () => 3 });
+await runJob(newJob(sentence(1) + sentence(2)), g, ui);
+g = fakeGemini();
+await runJob(newJob(sentence(1) + sentence(2)), g, ui);
+assert.equal(g.calls.tts, 1, "a flawed take is recorded again, not reused");
+// start-up cleanup does not wipe the cache
+await A.store.cleanup({});
+g = fakeGemini();
+await runJob(newJob(sentence(1) + sentence(2)), g, ui);
+assert.equal(g.calls.tts, 0, "the cache survives cleanup");
+// conversation batches are cached by their spoken lines and voices
+g = fakeGemini();
+job = newJob("Some text about memory. ".repeat(40), "conversation");
+await runJob(job, g, ui);
+const convScript = job.script;
+g = fakeGemini();
+job2 = newJob("Some other source text. ", "conversation");
+job2.script = convScript;
+job2.chunkChars = job.chunkChars;
+await runJob(job2, g, ui);
+assert.equal(g.calls.tts, 0, "same script, same voices: nothing to record");
+assert.equal(g.calls.text, 0);
+
+// ---- cache limits: expiry, then the oldest go first by size and count
+const now = 1e12, day = 24 * 3600 * 1000;
+const mk = (key, ageDays, mb) => ({ key, at: now - ageDays * day, bytes: mb * 1024 * 1024 });
+assert.deepEqual(A.cacheEvictions([mk("old", 15, 1), mk("new", 1, 1)], now), ["old"], "expires after 14 days");
+const big = [mk("a", 5, 60), mk("b", 4, 60), mk("c", 3, 60), mk("d", 2, 20)];
+assert.deepEqual(A.cacheEvictions(big, now), ["a"], "over 150 MB: the oldest goes");
+const many = Array.from({ length: 210 }, (_, i) => mk("k" + i, 10 - i / 100, 0.1));
+const dropped = A.cacheEvictions(many, now);
+assert.equal(dropped.length, 10);
+assert.ok(dropped.every((k) => +k.slice(1) < 10), "the 10 oldest");
+await A.store.clearCache();
+for (let i = 0; i < 3; i++) await A.store.putCache("x" + i, new Int16Array(10));
+assert.ok(await A.store.hasCache("x1"));
+assert.equal((await A.store.getCache("x2")).length, 10);
+assert.equal(await A.store.getCache("missing"), undefined);
+assert.notEqual(await A.contentKey(["a", "b"]), await A.contentKey(["a", "c"]));
+assert.equal(await A.contentKey(["a", ["b"]]), await A.contentKey(["a", ["b"]]));
+
+// ---- estimate: real chunks, parts already recorded
+const est = newJob(prose);
+est.chunkChars = 200;
+const real = (await planParts(est, { chunkChars: 200 }));
+assert.equal(real.ttsParts, first);
+assert.equal(real.alreadyDone, 0);
+await A.store.putPart(est.id, 0, new Int16Array(4));
+await A.store.putPart(est.id, 1, new Int16Array(4));
+assert.equal((await planParts(est, { chunkChars: 200 })).alreadyDone, 2, "a resumed job's recorded parts are not counted again");
+assert.equal((await planParts(newJob("   "), { chunkChars: 200 })).ttsParts, null);
+const convEst = newJob("Some text about memory. ".repeat(40), "conversation");
+assert.deepEqual(await planParts(convEst, { chunkChars: 200 }), { ttsParts: null, textParts: 1, alreadyDone: 0, cached: 0 });
+convEst.script = convScript; convEst.chunkChars = 200;
+const cp = await planParts(convEst, { chunkChars: 200 });
+assert.equal(cp.ttsParts, batchTurns(convScript, 200).length);
+assert.equal(cp.textParts, 0);
+
 console.log("ok");

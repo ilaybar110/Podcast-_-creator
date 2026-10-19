@@ -107,7 +107,7 @@ def _split_long(sentence: str, max_chars: int) -> list[str]:
 
 
 def chunk_text(text: str, max_chars: int = 1600) -> list[list[str]]:
-    """Group paragraphs into chunks of at most max_chars.
+    """Group paragraphs into chunks of about max_chars (see pack_even).
 
     Returns a list of chunks; each chunk is a list of paragraphs so the audio
     stage can place natural pauses between them. Never splits mid-sentence
@@ -119,47 +119,91 @@ def chunk_text(text: str, max_chars: int = 1600) -> list[list[str]]:
 # Silence placed between two recorded chunks, by what separates them in the text.
 BREAK_PAUSE_SEC = {"sentence": 0.35, "paragraph": 0.7, "section": 1.1}
 
+# A request may overrun max_chars by this much, so a tiny leftover never costs a whole request.
+OVERRUN = 1.1
+
+
+def pack_even(sizes: list[int], pens: list[int], max_chars: int) -> list[tuple[int, int]]:
+    """Even packing (twin of packEven in docs/js/text.js). sizes[i]: size of item i; pens[i]: how bad
+    it is to end a chunk after item i, in units of "10% off the target size". Picks the fewest chunks
+    that fit max_chars * OVERRUN, then the cut points where every chunk is closest to total / n and
+    the cuts are least bad. Returns [start, end) pairs. A single item may exceed the limit alone."""
+    m = len(sizes)
+    if not m:
+        return []
+    limit = int(max_chars * OVERRUN)
+    pre = [0]
+    for s in sizes:
+        pre.append(pre[-1] + s)
+    total = pre[m]
+    inf = float("inf")
+
+    def attempt(n: int, slack: float):
+        par = []
+        prev = [inf] * (m + 1)
+        prev[0] = 0
+        for k in range(1, n + 1):
+            cur = [inf] * (m + 1)
+            frm = [-1] * (m + 1)
+            for j in range(k, m - (n - k) + 1):
+                if abs(pre[j] * n - k * total) > slack * n:
+                    continue
+                for i in range(j - 1, k - 2, -1):
+                    size = pre[j] - pre[i]
+                    if size > limit and j - i > 1:
+                        break
+                    if prev[i] == inf:
+                        continue
+                    d = n * size - total
+                    cost = prev[i] + 100 * d * d + (pens[j - 1] * total * total if j < m else 0)
+                    if cost < cur[j]:
+                        cur[j] = cost
+                        frm[j] = i
+            par.append(frm)
+            prev = cur
+        if prev[m] == inf:
+            return None
+        out, j = [], m
+        for k in range(n, 0, -1):
+            i = par[k - 1][j]
+            out.insert(0, (i, j))
+            j = i
+        return out
+
+    for n in range(max(1, -(-total // limit)), m):
+        r = attempt(n, 1.5 * limit) or attempt(n, inf)
+        if r:
+            return r
+    return [(i, i + 1) for i in range(m)]
+
 
 def chunk_text_with_breaks(text: str, max_chars: int = 1600) -> tuple[list[list[str]], list[str]]:
     """The chunks of chunk_text plus breaks[i]: what separates chunk i from chunk i+1 -
-    "sentence" (inside a long paragraph), "paragraph", or "section" (chunk i+1 opens with
-    a heading). len(breaks) == len(chunks) - 1."""
+    "sentence" (inside a paragraph), "paragraph", or "section" (chunk i+1 opens with
+    a heading). len(breaks) == len(chunks) - 1.
+
+    Chunks are packed evenly (see pack_even): n = fewest requests that fit, each about total / n,
+    cut at paragraph boundaries where possible, never right after a heading."""
+    atoms = []      # sentences, remembering the paragraph they came from
+    for pi, (para, heading) in enumerate(_paragraph_blocks(text)):
+        sents = [p for s in split_sentences(para) for p in _split_long(s, max_chars)]
+        for k, s in enumerate(sents):
+            atoms.append((s, pi, para, heading, k == 0, len(sents)))
+    sizes = [len(a[0]) + (2 if a[4] else 1) for a in atoms]      # + the separator that joins it
+    pens = [4 if atoms[i + 1][1] == atoms[i][1] else 30 if atoms[i][3] else 0
+            for i in range(len(atoms) - 1)]
     chunks: list[list[str]] = []
-    starts: list[str] = []          # what kind of boundary each chunk begins at
-    cur: list[str] = []
-    cur_len = 0
-    cur_start = "paragraph"
-
-    def flush():
-        nonlocal cur, cur_len
-        if cur:
-            chunks.append(cur)
-            starts.append(cur_start)
-        cur, cur_len = [], 0
-
-    for para, heading in _paragraph_blocks(text):
-        kind = "section" if heading else "paragraph"
-        if len(para) > max_chars:
-            flush()
-            piece, piece_start = "", kind
-            for sent in split_sentences(para):
-                for s in _split_long(sent, max_chars):
-                    if len(piece) + len(s) + 1 > max_chars and piece:
-                        chunks.append([piece])
-                        starts.append(piece_start)
-                        piece, piece_start = s, "sentence"
-                    else:
-                        piece = f"{piece} {s}".strip()
-            if piece:
-                cur, cur_len, cur_start = [piece], len(piece), piece_start
-            continue
-        if cur_len + len(para) + 1 > max_chars:
-            flush()
-        if not cur:
-            cur_start = kind
-        cur.append(para)
-        cur_len += len(para) + 1
-    flush()
+    starts: list[str] = []
+    for i, j in pack_even(sizes, pens, max_chars):
+        chunk, k = [], i
+        while k < j:
+            e = k
+            while e < j and atoms[e][1] == atoms[k][1]:
+                e += 1
+            chunk.append(atoms[k][2] if e - k == atoms[k][5] else " ".join(a[0] for a in atoms[k:e]))
+            k = e
+        chunks.append(chunk)
+        starts.append("sentence" if not atoms[i][4] else "section" if atoms[i][3] else "paragraph")
     return chunks, starts[1:]
 
 

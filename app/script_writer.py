@@ -6,7 +6,7 @@ import re
 from . import prompts
 from .providers import ProviderError, Turn, with_retries
 from .providers.gemini import GeminiProvider
-from .text_utils import chunk_text
+from .text_utils import chunk_text, pack_even
 
 SOURCE_PART_CHARS = 6000
 
@@ -85,7 +85,6 @@ async def write_dialogue(gemini: GeminiProvider, text: str, language: str,
     return turns
 
 
-SOFT_FULL = 0.8          # a batch this full ends at the next good boundary
 LONG_TURN = 60           # a statement this long is a good place to end a batch
 SHORT_TURN = 25          # a reaction this short belongs with the line before it
 
@@ -105,33 +104,11 @@ def _bad_split(before: Turn, after: Turn) -> bool:
 
 
 def batch_turns(turns: list[Turn], max_chars: int) -> list[list[Turn]]:
-    """Group turns into TTS requests of at most max_chars, split where the conversation breathes:
-    once a batch is ~80% full it ends after a long statement; it never ends on a question or just
-    before a short reaction, unless only that keeps it under max_chars."""
-    batches: list[list[Turn]] = []
-    cur: list[Turn] = []
-    size = 0
-    for t in turns:
-        n = _size(t)
-        if cur and size + n > max_chars:
-            cut = len(cur)
-            if _bad_split(cur[-1], t):      # look back for a better place that still fits
-                tail = n
-                for j in range(len(cur) - 1, 0, -1):
-                    tail += _size(cur[j])
-                    if tail > max_chars or size - tail + n < SOFT_FULL / 2 * max_chars:
-                        break
-                    if not _bad_split(cur[j - 1], cur[j]):
-                        cut = j
-                        break
-            batches.append(cur[:cut])
-            cur = cur[cut:]
-            size = sum(_size(x) for x in cur)
-        elif cur and size >= SOFT_FULL * max_chars and _good_end(cur[-1]) and not _bad_split(cur[-1], t):
-            batches.append(cur)
-            cur, size = [], 0
-        cur.append(t)
-        size += n
-    if cur:
-        batches.append(cur)
-    return batches
+    """Group turns into TTS requests, packed evenly (see pack_even): the fewest requests that fit
+    max_chars (with 10% slack), each about the same size. A batch ends after a long statement where
+    possible, and avoids ending on a question or just before a short reaction (a heavy penalty, so it
+    only happens when nothing else keeps the batches under the limit)."""
+    sizes = [_size(t) for t in turns]
+    pens = [12 if _bad_split(turns[i], turns[i + 1]) else 0 if _good_end(turns[i]) else 1
+            for i in range(len(turns) - 1)]
+    return [turns[i:j] for i, j in pack_even(sizes, pens, max_chars)]

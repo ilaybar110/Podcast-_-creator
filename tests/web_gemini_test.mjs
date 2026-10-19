@@ -104,4 +104,34 @@ function client(fetchFn, opts = {}) {
   }
 }
 
+// the estimate uses real part counts, minus parts already recorded or cached; the retake reserve is learned
+{
+  const ledger = new Ledger(memStorage());
+  const v = (extra = {}) => G.freeVerdict({ chars: 99999, mode: "narrator", apiKey: "k", billing: false, ledger, ...extra });
+  let b = (await v({ ttsParts: 8 })).buckets.gemini_tts;
+  assert.deepEqual([b.needed, b.reserve], [8, 2], "default reserve 15%");
+  b = (await v({ ttsParts: 8, alreadyDone: 3 })).buckets.gemini_tts;
+  assert.equal(b.needed, 5, "a resumed job does not count its recorded parts again");
+  b = (await v({ ttsParts: 8, alreadyDone: 3, cached: 2 })).buckets.gemini_tts;
+  assert.equal(b.needed, 3, "nor the ones the cache holds");
+  assert.equal((await v({ ttsParts: 2, alreadyDone: 2 })).buckets.gemini_tts, undefined, "nothing left to record");
+  b = (await v({ chars: 9000, chunkChars: 4500 })).buckets.gemini_tts;
+  assert.equal(b.needed, 3, "without a count: length / (0.95 * chunk)");
+  const conv = (await v({ mode: "conversation", textParts: 3, ttsParts: null })).buckets;
+  assert.equal(conv.gemini_text.needed, 3);
+  // observed retake rate, clamped to 5-30%
+  assert.equal(ledger.retakeRate(), 0.15, "not enough data yet");
+  ledger.noteTakes(20, 0);
+  assert.equal(ledger.retakeRate(), 0.05);
+  ledger.noteTakes(0, 100);
+  assert.equal(ledger.retakeRate(), 0.3);
+  const l2 = new Ledger(memStorage());
+  l2.noteTakes(20, 4);
+  assert.ok(Math.abs(l2.retakeRate() - 0.2) < 1e-9);
+  b = (await G.freeVerdict({ ttsParts: 10, mode: "narrator", apiKey: "k", billing: false, ledger: l2 })).buckets.gemini_tts;
+  assert.equal(b.reserve, 2);
+  l2.noteTakes(200, 0);                       // old data fades: the window keeps the newest ~100 parts
+  assert.ok(l2.retakeRate() < 0.1);
+}
+
 console.log("web gemini tests passed");

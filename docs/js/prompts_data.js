@@ -69,7 +69,7 @@ export const DATA = {
   },
   "gemini_text": {
    "rpm": 10,
-   "rpd": 250,
+   "rpd": 50,
    "tpm": 250000
   },
   "gemini_search": {
@@ -78,5 +78,9 @@ export const DATA = {
    "tpm": 250000
   }
  },
- "FREE_CHUNK_CHARS": 3000
+ "FREE_CHUNK_CHARS": 4500,
+ "FILL_FACTOR": 0.95,
+ "RESERVE": 0.15,
+ "RESERVE_MIN": 0.05,
+ "RESERVE_MAX": 0.3
 };

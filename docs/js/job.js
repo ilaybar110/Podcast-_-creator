@@ -1,5 +1,5 @@
 // Podcast generation in the browser (port of app/jobs.py + app/script_writer.py).
-import { cleanText, chunkText, chunkTextWithBreaks, breakPauses, BREAK_PAUSE_SEC, turnGapSec, splitSentences } from "./text.js";
+import { cleanText, chunkText, chunkTextWithBreaks, breakPauses, BREAK_PAUSE_SEC, turnGapSec, splitSentences, packEven } from "./text.js";
 import { prepareForSpeech } from "./speech.js";
 import { podcastScriptPrompt, parseDialogue, stripTags } from "./prompts.js";
 import { Cancelled, ProviderError, QuotaExhausted, VOICES, nextReset, withRetries } from "./gemini.js";
@@ -14,7 +14,7 @@ const RETAKES = {
 };
 const TARGET_LUFS = -16;
 const LEAD_IN_SEC = 0.35, TAIL_SEC = 0.6;
-const BATCH_VERSION = 2;      // bump when batchTurns changes where batches end
+const BATCH_VERSION = 3;      // bump when batchTurns changes where batches end
 
 export { Cancelled };
 
@@ -26,45 +26,70 @@ export function hostNames(language, g1, g2) {
   return [first, pool[0] === first ? pool[1] : pool[0]];
 }
 
-// Batch boundaries (twin of app/script_writer.py batch_turns): once a batch is ~80% full it ends
-// after a long statement; it never ends on a question or just before a short reaction, unless
-// only that keeps it under maxChars.
-const SOFT_FULL = 0.8, LONG_TURN = 60, SHORT_TURN = 25;
+// Batch boundaries (twin of app/script_writer.py batch_turns): the fewest requests that fit maxChars
+// (10% slack), packed evenly; a batch ends after a long statement where possible and avoids ending on
+// a question or just before a short reaction, unless only that keeps it under the limit.
+const LONG_TURN = 60, SHORT_TURN = 25;
 const turnSize = (t) => t.text.length + t.speaker.length + 3;
 const goodEnd = (t) => { const w = stripTags(t.text); return w.length > LONG_TURN && /\.["'”’״)]*$/.test(w); };
 const badSplit = (before, after) =>
   stripTags(before.text).replace(/["'”’״) ]+$/, "").endsWith("?") || stripTags(after.text).length < SHORT_TURN;
 
 export function batchTurns(turns, maxChars) {
-  const batches = [];
-  let cur = [], size = 0;
-  for (const t of turns) {
-    const n = turnSize(t);
-    if (cur.length && size + n > maxChars) {
-      let cut = cur.length;
-      if (badSplit(cur[cur.length - 1], t)) {     // look back for a better place that still fits
-        let tail = n;
-        for (let j = cur.length - 1; j > 0; j--) {
-          tail += turnSize(cur[j]);
-          if (tail > maxChars || size - tail + n < SOFT_FULL / 2 * maxChars) break;
-          if (!badSplit(cur[j - 1], cur[j])) { cut = j; break; }
-        }
-      }
-      batches.push(cur.slice(0, cut));
-      cur = cur.slice(cut);
-      size = cur.reduce((s, x) => s + turnSize(x), 0);
-    } else if (cur.length && size >= SOFT_FULL * maxChars && goodEnd(cur[cur.length - 1]) && !badSplit(cur[cur.length - 1], t)) {
-      batches.push(cur); cur = []; size = 0;
-    }
-    cur.push(t); size += n;
-  }
-  if (cur.length) batches.push(cur);
-  return batches;
+  const pens = turns.slice(0, -1).map((t, i) => badSplit(t, turns[i + 1]) ? 12 : goodEnd(t) ? 0 : 1);
+  return packEven(turns.map(turnSize), pens, maxChars).map(([i, j]) => turns.slice(i, j));
 }
 
 // What the voice reads: numbers/symbols spelled out (the saved and shown script stays as written).
 // The job's language is passed: a short Hebrew turn with an English cue like [laughs] must not be detected as English.
 const spokenTurns = (batch, language) => batch.map((t) => ({ ...t, text: prepareForSpeech(t.text, language) }));
+
+/** Voices, genders and host names of a request: the same for the recording and for the estimate. */
+function voiceSetup(req) {
+  const gender = Object.fromEntries(VOICES.map((v) => [v.id, v.gender]));
+  const v1 = req.voice, v2 = req.voice2 && req.voice2 !== v1 ? req.voice2 : VOICES.find((v) => v.id !== v1 && v.recommended).id;
+  const genders = [gender[v1] || "female", gender[v2] || "male"];
+  const opts = { language: req.language, style: req.style, pace: req.pace,
+    hostNames: hostNames(req.language, genders[0], genders[1]), genders };
+  return { v1, v2, genders, opts, voices: { [opts.hostNames[0]]: v1, [opts.hostNames[1]]: v2 } };
+}
+
+// A recording is cached by content: everything that shapes the audio, and the exact spoken text.
+const cacheParts = (req, vs, spoken) => [req.mode, req.mode === "conversation" ? [vs.v1, vs.v2] : vs.v1,
+  vs.opts.hostNames, vs.genders, req.style, req.pace, req.language, spoken];
+const narratorSpoken = (paras, language) => prepareForSpeech(paras.join("\n\n"), language);
+const batchSpoken = (batch, language) => spokenTurns(batch, language).map((t) => `${t.speaker}: ${t.text}`).join("\n");
+
+/**
+ * The real number of requests a podcast needs (what the free-tier badge shows): runs the chunker on
+ * the actual text - or on the written script of a conversation - and counts the parts a resumed job
+ * already recorded and the ones the recordings cache holds (`model`, the voice model, is needed to
+ * find those). Until a conversation's script exists, its voice requests can't be counted (null).
+ *   -> { ttsParts, textParts, alreadyDone, cached }
+ */
+export async function planParts(job, { model = "", chunkChars = job.chunkChars } = {}) {
+  const req = job.request, text = cleanText(req.text || "");
+  const out = { ttsParts: null, textParts: null, alreadyDone: 0, cached: 0 };
+  if (!text) return out;
+  const conv = req.mode === "conversation", vs = voiceSetup(req);
+  let spoken;
+  if (conv) {
+    out.textParts = job.script ? 0 : Math.max(1, chunkText(text, 6000).length) - (job.scriptPieces?.length || 0);
+    if (!job.script) return out;
+    spoken = batchTurns(job.script, chunkChars).map((b) => batchSpoken(b, req.language));
+  } else {
+    spoken = chunkText(text, chunkChars).map((p) => narratorSpoken(p, req.language));
+  }
+  out.ttsParts = spoken.length;
+  const keepsParts = !conv || job.batchVersion === BATCH_VERSION;     // older batches are re-recorded
+  for (let i = 0; i < spoken.length; i++) {
+    try {
+      if (job.id && keepsParts && await A.store.hasPart(job.id, i)) { out.alreadyDone++; continue; }
+      if (model && await A.store.hasCache(await A.contentKey([model, ...cacheParts(req, vs, spoken[i])]))) out.cached++;
+    } catch { /* storage unavailable: count it as a request */ }
+  }
+  return out;
+}
 const halves = (a) => [a.slice(0, a.length >> 1), a.slice(a.length >> 1)];
 const truncated = (p) => p.some((x) => x.startsWith("too short"));
 const neverTruncated = (label) => new ProviderError(`${label}: the voice engine keeps cutting this passage short, ` +
@@ -101,11 +126,8 @@ async function pool(items, concurrency, worker, shouldStop) {
  */
 export async function runJob(job, gemini, ui) {
   const req = job.request;
-  const gender = Object.fromEntries(VOICES.map((v) => [v.id, v.gender]));
-  const v1 = req.voice, v2 = req.voice2 && req.voice2 !== v1 ? req.voice2 : VOICES.find((v) => v.id !== v1 && v.recommended).id;
-  const genders = [gender[v1] || "female", gender[v2] || "male"];
-  const opts = { language: req.language, style: req.style, pace: req.pace,
-    hostNames: hostNames(req.language, genders[0], genders[1]), genders };
+  const vs = voiceSetup(req);
+  const { v1, v2, genders, opts, voices } = vs;
   gemini.gate.onWait = (s, why) => ui.progress(null, why === "offline" ? "You are offline: waiting for the connection to come back"
     : `Staying within the free tier: waiting ${Math.round(s)}s for the per-minute limit`);
   // A podcast from a topic: research the chosen focus and write the script first (saved, so resuming skips it).
@@ -153,6 +175,7 @@ export async function runJob(job, gemini, ui) {
         // Out of quota on a retake: an earlier complete take is better than nothing.
         if (e instanceof QuotaExhausted && best && !truncated(bestProblems)) {
           job.warnings.push(`${label}: kept an earlier take, no quota left for a retake (${bestProblems.join("; ")})`);
+          part.flawed = true;
           return [best, bestProblems];
         }
         throw e;
@@ -169,18 +192,37 @@ export async function runJob(job, gemini, ui) {
       throw new ProviderError(`${label}: this passage used up its retakes for now. Continue to try it again.`);
     }
     if (!best) throw neverTruncated(label);
-    if (!truncated(bestProblems)) job.warnings.push(`${label}: kept best of ${takes} take${takes > 1 ? "s" : ""} (${bestProblems.join("; ")})`);
+    if (!truncated(bestProblems)) {
+      job.warnings.push(`${label}: kept best of ${takes} take${takes > 1 ? "s" : ""} (${bestProblems.join("; ")})`);
+      part.flawed = true;
+    }
     return [best, bestProblems];
   }
 
   let done = 0, units = [], pauses = [];    // pauses[i]: silence after part i
-  const tick = (start, span) => { done++; ui.progress(start + span * done / units.length, `Recording voice: part ${done} of ${units.length}`); };
+  let reused = 0, recorded = 0;             // parts taken from the cache / recorded with requests in this run
+  const tick = (start, span) => {
+    done++;
+    ui.progress(start + span * done / units.length, `Recording voice: part ${done} of ${units.length}` +
+      (reused ? ` (${reused} reused, no quota used)` : ""));
+  };
+  let model = "";                            // the voice model is part of what a cached recording is keyed by
+  try { model = (await gemini.ttsModel?.()) || ""; } catch { /* the first request reports a missing model */ }
 
-  async function record(i, makeAudio, start, span) {
+  /** `spoken`: the exact text sent to the voice, which (with the voices and style) names the recording. */
+  async function record(i, makeAudio, start, span, spoken) {
     started++;
     if (await A.store.hasPart(job.id, i)) { tick(start, span); return; }    // resumed: already recorded
-    const pcm = await makeAudio({ requests: 0 });
-    await A.store.putPart(job.id, i, A.fade(pcm));
+    const key = await A.contentKey([model, ...cacheParts(req, vs, spoken)]);
+    let pcm = await A.store.getCache(key);
+    if (pcm) reused++;                                                       // same passage recorded before: no request
+    else {
+      const part = { requests: 0 };
+      pcm = A.fade(await makeAudio(part));
+      recorded++;
+      if (!part.flawed) await A.store.putCache(key, pcm);                    // a take kept with problems is not reused
+    }
+    await A.store.putPart(job.id, i, pcm);
     tick(start, span);
   }
 
@@ -207,7 +249,6 @@ export async function runJob(job, gemini, ui) {
       delete job.scriptPieces;
       await A.store.saveJob(job);     // the script is kept, so resuming never re-writes it
     }
-    const voices = { [opts.hostNames[0]]: v1, [opts.hostNames[1]]: v2 };
     // Parts recorded by an older app version used other batch boundaries: re-record them, never mix them.
     if (job.batchVersion !== BATCH_VERSION) {
       await A.store.deleteParts(job.id);
@@ -226,8 +267,8 @@ export async function runJob(job, gemini, ui) {
       return joinPcm([await speak(a, label, part, depth + 1), await speak(b, label, part, depth + 1)],
         turnGapSec(a[a.length - 1], b[0]));
     };
-    await pool(units, gemini.concurrency, (i, batch) => record(i, (part) => speak(spokenTurns(batch, req.language), `Part ${i + 1}`, part), 0.28, 0.62),
-      ui.cancelled);
+    await pool(units, gemini.concurrency, (i, batch) => record(i, (part) => speak(spokenTurns(batch, req.language), `Part ${i + 1}`, part), 0.28, 0.62,
+      batchSpoken(batch, req.language)), ui.cancelled);
   } else {
     const { chunks, breaks } = chunkTextWithBreaks(text, job.chunkChars);
     units = chunks;
@@ -242,10 +283,17 @@ export async function runJob(job, gemini, ui) {
       return joinPcm([await speak(a.join(" "), label, part, depth + 1), await speak(b.join(" "), label, part, depth + 1)],
         BREAK_PAUSE_SEC.sentence);
     };
-    await pool(units, gemini.concurrency, (i, paras) => record(i, (part) => speak(prepareForSpeech(paras.join("\n\n"), req.language), `Part ${i + 1}`, part),
-      req.topic ? 0.25 : 0.02, req.topic ? 0.65 : 0.88),
-      ui.cancelled);
+    await pool(units, gemini.concurrency, (i, paras) => {
+      const spoken = narratorSpoken(paras, req.language);
+      return record(i, (part) => speak(spoken, `Part ${i + 1}`, part), req.topic ? 0.25 : 0.02, req.topic ? 0.65 : 0.88, spoken);
+    }, ui.cancelled);
   }
+
+  // What this run learned: the retake rate (for the next estimate) and how much came from the cache.
+  if (gemini.freeOnly && recorded) gemini.gate?.ledger?.noteTakes?.(recorded, extraUsed);
+  job.warnings = (job.warnings || []).filter((w) => !/^Reused \d+ recording/.test(w));
+  if (reused) job.reused = (job.reused || 0) + reused;
+  if (job.reused) job.warnings.push(`Reused ${job.reused} recording${job.reused > 1 ? "s" : ""} from earlier podcasts, no quota used.`);
 
   // ------------------------------------------------------------- mastering
   ui.progress(0.91, "Mastering audio (warmth EQ, loudness)");
@@ -285,5 +333,5 @@ export async function runJob(job, gemini, ui) {
   job.status = "done";
   await A.store.saveJob(job);
   await A.store.deleteParts(job.id, ["mp3"]);
-  return { blob, samplesDuration: samples / A.SAMPLE_RATE };
+  return { blob, samplesDuration: samples / A.SAMPLE_RATE, reused: job.reused || 0 };
 }

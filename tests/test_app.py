@@ -9,7 +9,7 @@ from fastapi.testclient import TestClient
 from app import audio, quality, script_writer
 from app.providers import PROVIDER_CLASSES, Provider, SynthesisOptions, Turn, Voice
 from app.providers.gemini import GeminiProvider
-from app.text_utils import chunk_text, clean_text, detect_language, estimate_seconds, format_duration
+from app.text_utils import chunk_text, chunk_text_with_breaks, clean_text, detect_language, estimate_seconds, format_duration
 
 SR = audio.SAMPLE_RATE
 
@@ -93,7 +93,7 @@ def test_chunking_covers_all_text_and_respects_limits():
     chunks = chunk_text(text, 1500)
     joined = " ".join(" ".join(c) for c in chunks).split()
     assert joined == clean_text(text).split()
-    assert all(len("\n\n".join(c)) <= 1500 + 10 for c in chunks)
+    assert all(len("\n\n".join(c)) <= 1500 * 1.1 for c in chunks)
 
 
 def test_estimate_and_format():
@@ -142,26 +142,37 @@ def _turns(*texts):
     return [Turn("Noa" if i % 2 == 0 else "Yoni", t) for i, t in enumerate(texts)]
 
 
-def test_batch_turns_prefers_natural_boundaries():
-    long_stmt = "This is a long, complete statement that explains the idea in full detail."   # > 60 chars
-    # soft split: ~80% full and the last turn is a long statement
-    turns = _turns(*["x" * 70 + "."] * 5, long_stmt, "y" * 70 + ".", "z" * 70 + ".")
-    batches = script_writer.batch_turns(turns, 580)
-    assert all(sum(len(t.text) + len(t.speaker) + 3 for t in b) <= 580 for b in batches)
-    assert batches[0][-1].text == long_stmt
+def _size(batch):
+    return sum(len(t.text) + len(t.speaker) + 3 for t in batch)
 
-    # hard max on a question / before a short reaction: back up to the previous good boundary
+
+def test_batch_turns_prefers_natural_boundaries():
     q = "And what does that actually mean for the people living there today?"
-    turns = _turns("a" * 150 + ".", "b" * 150 + ".", "c" * 100 + ".", q, "d" * 120 + ".")
+    # a question is not split from its answer when an equally good cut exists
+    turns = _turns("a" * 150 + ".", "b" * 100 + ".", q, "c" * 150 + ".", "d" * 190 + ".")
     batches = script_writer.batch_turns(turns, 500)
-    assert batches[0][-1].text.startswith("c") and batches[1][0].text == q
+    assert [len(b) for b in batches] == [2, 3] and batches[1][0].text == q
+    # ...nor a short reaction from the line before it
     turns = _turns("a" * 150 + ".", "b" * 150 + ".", "c" * 150 + ".", "Wow, really?", "e" * 60)
     batches = script_writer.batch_turns(turns, 500)
-    assert batches[0][-1].text.startswith("b") and [t.text for t in batches[1]][:2] == ["c" * 150 + ".", "Wow, really?"]
-
+    assert [t.text for t in batches[1]][:2] == ["c" * 150 + ".", "Wow, really?"]
     # nothing better fits: the hard max still wins
     turns = _turns("a" * 300 + "?", "c" * 190 + ".")
-    assert [len(b) for b in script_writer.batch_turns(turns, 500)] == [1, 1]
+    assert [len(b) for b in script_writer.batch_turns(turns, 400)] == [1, 1]
+    assert [len(b) for b in script_writer.batch_turns(turns, 500)] == [2]      # fits with 10% slack
+
+
+def test_batch_turns_pack_evenly():
+    turns = _turns(*[("w" * (40 + (i * 37) % 90)) + "." for i in range(60)])
+    total = _size(turns)
+    for mx in (300, 700, 1500):
+        batches = script_writer.batch_turns(turns, mx)
+        assert [t for b in batches for t in b] == turns
+        sizes = [_size(b) for b in batches]
+        assert max(sizes) <= mx * 1.1
+        if len(batches) > 1:
+            assert min(sizes) >= 0.6 * total / len(batches), sizes     # no tiny last batch
+    assert script_writer.batch_turns([], 500) == []
 
 
 def test_web_dialogue_parsing_and_batching_match_python():
@@ -364,7 +375,7 @@ def test_free_verdict_counts_requests(ledger):
     chunk = budget.FREE_CHUNK_CHARS
     v = budget.gemini_verdict(chunk * 5, "narrator", "k", None, billing=False)
     b = v["buckets"]["gemini_tts"]
-    assert v["status"] == "free" and b["needed"] == 5 and b["left_today"] == 10
+    assert v["status"] == "free" and b["needed"] == 6 and b["left_today"] == 10     # 5 chunks of text / 0.95 fill
     assert "gemini_text" not in v["buckets"]
     # 40 requests (+6 reserve) at 10/day -> spans days, still free
     v = budget.gemini_verdict(chunk * 40, "narrator", "k", None, billing=False)
@@ -603,6 +614,78 @@ def test_web_pause_kinds_match_python():
               "process.stdout.write(JSON.stringify(s.map(t => m.chunkTextWithBreaks(m.cleanText(t), 500).breaks))); })")
     out = subprocess.run(["node", "-e", script], input=json.dumps(samples), capture_output=True, text=True, check=True)
     assert json.loads(out.stdout) == [chunk_text_with_breaks(clean_text(t), 500)[1] for t in samples]
+
+
+def _long_sample(paragraphs=45):
+    return "\n\n".join(f"פסקה {i}. " + "משפט בדיקה ארוך, עם פסיקים; וגם ציטוט. " * (i * 7 % 11 + 1) for i in range(paragraphs))
+
+
+def test_chunks_are_packed_evenly():
+    for mx in (700, 1500, 4500):
+        for n_par in (3, 12, 45, 90):
+            text = clean_text(_long_sample(n_par))
+            chunks, breaks = chunk_text_with_breaks(text, mx)
+            sizes = [len("\n\n".join(c)) for c in chunks]
+            assert len(breaks) == len(chunks) - 1
+            assert chunks == chunk_text(text, mx)
+            assert " ".join(" ".join(c) for c in chunks).split() == text.split()
+            assert max(sizes) <= mx * 1.1, (mx, n_par, sizes)
+            if len(chunks) > 1:                      # no tiny leftover chunk: every chunk is near the average
+                avg = sum(sizes) / len(sizes)
+                assert min(sizes) >= 0.75 * avg and max(sizes) <= 1.15 * avg, (mx, n_par, sizes)
+                # and no more requests than the length needs (10% slack allowed)
+                assert len(chunks) <= -(-sum(sizes) // int(mx * 0.95)) + 1
+    # a text a few percent over the limit still fits one request (10% slack)
+    assert len(chunk_text("Word. " * 780, 4500)) == 1
+    assert chunk_text("", 1000) == []
+
+
+def test_chunks_prefer_paragraph_and_never_end_on_a_heading():
+    text = "Chapter one\n\n" + "\n\n".join("Sentence number %d is here. " % i * 6 for i in range(14))
+    chunks, breaks = chunk_text_with_breaks(clean_text(text), 700)
+    assert all(not (len(c) == 1 and c[0] == "Chapter one.") for c in chunks)
+    assert chunks[0][0] == "Chapter one."
+    assert all(c[-1] != "Chapter one." for c in chunks)
+    long_heading = "Intro\n\nChapter two\n\n" + "A fairly ordinary sentence here. " * 40
+    for mx in (200, 400, 900):
+        chunks, _ = chunk_text_with_breaks(clean_text(long_heading), mx)
+        assert not any(c[-1] in ("Intro.", "Chapter two.") for c in chunks[:-1]), chunks
+
+
+def test_web_even_packing_matches_python():
+    import json
+    import shutil
+    import subprocess
+    from pathlib import Path
+    if not shutil.which("node"):
+        pytest.skip("node not installed")
+    samples = [_long_sample(45), _long_sample(90), "Chapter one\n\n" + "A sentence of some length here. " * 400,
+               "\n\n".join("Short para %d." % i for i in range(200)), "word " * 3000]
+    js = Path(__file__).resolve().parent.parent / "docs" / "js" / "text.js"
+    script = (f"import('{js.as_posix()}').then(m => {{ const s = JSON.parse(require('fs').readFileSync(0, 'utf8'));"
+              "process.stdout.write(JSON.stringify(s.map(t => [300, 1500, 4500].map(mx => m.chunkTextWithBreaks(m.cleanText(t), mx))))); })")
+    out = subprocess.run(["node", "-e", script], input=json.dumps(samples), capture_output=True, text=True, check=True)
+    web = json.loads(out.stdout)
+    for sample, per_max in zip(samples, web):
+        for mx, got in zip((300, 1500, 4500), per_max):
+            chunks, breaks = chunk_text_with_breaks(clean_text(sample), mx)
+            assert got["chunks"] == chunks and got["breaks"] == breaks, mx
+
+
+def test_estimate_counts_real_chunks_and_resumed_parts(ledger):
+    text = clean_text(_long_sample(60))
+    real = len(chunk_text(text, budget.FREE_CHUNK_CHARS))
+    v = budget.gemini_verdict(len(text), "narrator", "k", None, False, text=text)
+    assert v["buckets"]["gemini_tts"]["needed"] == real
+    v = budget.gemini_verdict(len(text), "narrator", "k", None, False, text=text, already_done=real - 1)
+    assert v["buckets"]["gemini_tts"]["needed"] == 1
+    # conversation: the script parts are counted by the real chunker too
+    v = budget.gemini_verdict(len(text), "conversation", "k", None, False, text=text)
+    assert v["buckets"]["gemini_text"]["needed"] == len(chunk_text(text, budget.SCRIPT_PART_CHARS))
+    # without the text, the length-based estimate uses the measured fill factor
+    v = budget.gemini_verdict(budget.FREE_CHUNK_CHARS * 5, "narrator", "k", None, False)
+    assert v["buckets"]["gemini_tts"]["needed"] == 6
+    assert budget.DEFAULT_LIMITS["gemini_text"]["rpd"] == 50 and budget.FREE_CHUNK_CHARS == 4500
 
 
 def test_mastering_is_linear_limited_and_fills_gaps_with_room_tone(tmp_path):
