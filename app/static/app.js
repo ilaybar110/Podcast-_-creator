@@ -66,6 +66,7 @@ const state = {
   ui: store.get("ui", "he"),
   lang: "he", mode: "narrator", engine: store.get("engine", "auto"), style: "warm", pace: "natural",
   voice: "", voice2: "", showAll: false, config: null, langTouched: false, jobId: null, timer: null,
+  busy: false, cfgSeq: 0, estSeq: 0,
 };
 const t = (k) => I18N[state.ui][k] ?? k;
 
@@ -102,8 +103,14 @@ function seg(id, key, onChange) {
 function setSeg(id, v) { [...$(id).children].forEach((c) => c.classList.toggle("on", c.dataset.v === v)); }
 
 async function loadConfig() {
-  const r = await fetch(`/api/config?language=${state.lang}`, { headers: headers() });
-  state.config = await r.json();
+  const seq = ++state.cfgSeq;
+  let cfg;
+  try {
+    const r = await fetch(`/api/config?language=${state.lang}`, { headers: headers() });
+    cfg = await r.json();
+  } catch (err) { return showError(err.message); }
+  if (seq !== state.cfgSeq) return;          // a newer request (e.g. language switch) won
+  state.config = cfg;
   const sel = $("engine");
   sel.innerHTML = "";
   const firstAvail = state.config.engines.find((e) => e.available);
@@ -194,12 +201,16 @@ function updateModeHint() {
   if (state.mode === "conversation" && !state.config?.conversation_available) h = t("convNeedsGemini");
   if (state.engine === "edge") h += " " + t("edgeNote");
   $("modeHint").textContent = h;
-  $("generate").disabled = !state.engine || (state.mode === "conversation" && !state.config?.conversation_available);
+  $("generate").disabled = state.busy || !state.engine || (state.mode === "conversation" && !state.config?.conversation_available);
 }
 
-let audioEl = null;
+let audioEl = null, previewSeq = 0;
+function stopPreview() {
+  if (audioEl) { audioEl.pause(); URL.revokeObjectURL(audioEl.src); audioEl = null; }
+}
 async function preview(voiceId, btn) {
-  if (audioEl) { audioEl.pause(); audioEl = null; }
+  const seq = ++previewSeq;
+  stopPreview();
   document.querySelectorAll(".play").forEach((b) => { b.textContent = "▶"; });
   if (btn.dataset.playing === "1") { btn.dataset.playing = ""; return; }
   btn.classList.add("loading"); btn.textContent = "…";
@@ -209,8 +220,9 @@ async function preview(voiceId, btn) {
       body: JSON.stringify({ language: state.lang, provider: state.engine, voice: voiceId, style: state.style, pace: state.pace }),
     });
     if (!r.ok) throw new Error((await r.json()).detail || r.statusText);
-    const url = URL.createObjectURL(await r.blob());
-    audioEl = new Audio(url);
+    const blob = await r.blob();
+    if (seq !== previewSeq) return;          // another preview was clicked meanwhile
+    audioEl = new Audio(URL.createObjectURL(blob));
     document.querySelectorAll(".play").forEach((b) => { b.dataset.playing = ""; });
     btn.dataset.playing = "1"; btn.textContent = "❚❚";
     audioEl.onended = () => { btn.textContent = "▶"; btn.dataset.playing = ""; };
@@ -226,6 +238,7 @@ let estTimer = null;
 function onTextChange() {
   clearTimeout(estTimer);
   estTimer = setTimeout(async () => {
+    const seq = ++state.estSeq;
     const text = $("text").value;
     if (!text.trim()) { $("statChars").textContent = "0"; $("statWords").textContent = "0"; $("statEst").textContent = "0:00"; return; }
     const r = await fetch("/api/estimate", {
@@ -233,6 +246,7 @@ function onTextChange() {
       body: JSON.stringify({ text, language: state.langTouched ? state.lang : null, mode: state.mode }),
     });
     const d = await r.json();
+    if (seq !== state.estSeq || !r.ok) return;   // a newer keystroke's estimate is coming
     $("statChars").textContent = d.chars.toLocaleString();
     $("statWords").textContent = d.words.toLocaleString();
     $("statEst").textContent = "~" + d.estimated_str;
@@ -258,34 +272,53 @@ function showError(msg) { $("error").hidden = !msg; $("error").textContent = msg
 function fmtSize(b) { return b > 1048576 ? (b / 1048576).toFixed(1) + " MB" : Math.round(b / 1024) + " KB"; }
 function fmtSec(s) { s = Math.round(s); const m = Math.floor(s / 60); return `${m}:${String(s % 60).padStart(2, "0")}`; }
 
+async function readJSON(r) {
+  try { return await r.json(); } catch { return { detail: `${r.status} ${r.statusText}` }; }
+}
+function errText(d) {
+  return Array.isArray(d.detail) ? d.detail.map((x) => x.msg).join(", ") : (d.detail || d.error || "Error");
+}
+
 async function generate() {
+  if (state.busy) return;
   showError("");
   const text = $("text").value;
   if (!text.trim()) return showError(t("emptyText"));
   $("result").hidden = true;
+  state.busy = true;
   $("generate").disabled = true;
   $("progress").hidden = false;
   $("stage").textContent = t("starting");
   $("barFill").style.width = "1%";
-  const r = await fetch("/api/jobs", {
-    method: "POST", headers: headers(),
-    body: JSON.stringify({
-      text, language: state.lang, mode: state.mode, provider: state.engine, voice: state.voice,
-      voice2: state.voice2, style: state.style, pace: state.pace, warm_master: $("warm").checked,
-      title: $("title").value || t("defaultTitle"),
-    }),
-  });
-  const d = await r.json();
-  if (!r.ok) { finish(); return showError(d.detail?.[0]?.msg || d.detail || "Error"); }
-  state.jobId = d.id;
-  poll();
+  try {
+    const r = await fetch("/api/jobs", {
+      method: "POST", headers: headers(),
+      body: JSON.stringify({
+        text, language: state.lang, mode: state.mode, provider: state.engine, voice: state.voice,
+        voice2: state.voice2, style: state.style, pace: state.pace, warm_master: $("warm").checked,
+        title: $("title").value || t("defaultTitle"),
+      }),
+    });
+    const d = await readJSON(r);
+    if (!r.ok) { finish(); return showError(errText(d)); }
+    state.jobId = d.id;
+    poll();
+  } catch (err) { finish(); showError(err.message); }
 }
 
+let pollFailures = 0;
 async function poll() {
   clearTimeout(state.timer);
-  const r = await fetch(`/api/jobs/${state.jobId}`);
-  if (!r.ok) { finish(); return showError((await r.json()).detail); }
-  const j = await r.json();
+  let r, j;
+  try {
+    r = await fetch(`/api/jobs/${state.jobId}`);
+    j = await readJSON(r);
+  } catch (err) {                       // transient network blip: keep trying for a while
+    if (++pollFailures < 20) { state.timer = setTimeout(poll, 3000); return; }
+    finish(); return showError(err.message);
+  }
+  pollFailures = 0;
+  if (!r.ok) { finish(); return showError(errText(j)); }
   $("barFill").style.width = Math.max(1, j.progress * 100) + "%";
   $("pct").textContent = Math.round(j.progress * 100) + "%";
   $("stage").textContent = j.stage;
@@ -295,7 +328,7 @@ async function poll() {
   state.timer = setTimeout(poll, 1500);
 }
 
-function finish() { $("progress").hidden = true; updateModeHint(); }
+function finish() { state.busy = false; $("progress").hidden = true; updateModeHint(); }
 
 async function showResult(j) {
   const res = j.result;

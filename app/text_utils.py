@@ -27,9 +27,9 @@ def clean_text(text: str) -> str:
     text = re.sub(r"https?://\S+|www\.\S+", "", text)
     # Markdown markup: headings, emphasis, code fences, bullets, tables.
     text = re.sub(r"```.*?```", "", text, flags=re.S)
-    text = re.sub(r"^\s{0,3}#{1,6}\s*", "", text, flags=re.M)
+    text = re.sub(r"^[ \t]{0,3}#{1,6}[ \t]*", "", text, flags=re.M)
     text = re.sub(r"(\*\*|__|\*|`|~~)", "", text)
-    text = re.sub(r"^\s*[-*•●▪]\s+", "", text, flags=re.M)
+    text = re.sub(r"^[ \t]*[-*•●▪][ \t]+", "", text, flags=re.M)
     text = re.sub(r"^\s*\|.*\|\s*$", lambda m: m.group(0).replace("|", ", ").strip(", "), text, flags=re.M)
     # Emoji and pictographs.
     text = re.sub("[\U0001F000-\U0001FAFF☀-➿️‍]", "", text)
@@ -50,7 +50,7 @@ def paragraphs(text: str) -> list[str]:
         lines = [ln.strip() for ln in block.split("\n") if ln.strip()]
         current = ""
         for ln in lines:
-            is_heading = len(ln) < 60 and not re.search(r"[.!?:,;״\"']$", ln)
+            is_heading = len(ln) < 40 and not re.search(r"[.!?:,;…״׳\"'”)\]]$", ln)
             if is_heading:
                 if current:
                     out.append(current)
@@ -63,7 +63,9 @@ def paragraphs(text: str) -> list[str]:
     return out
 
 
-_SENTENCE_RE = re.compile(r"(?<=[.!?…])[\"'״”)]*\s+")
+_CLOSE = "\"'״”)\\]"
+# split on whitespace after sentence-final punctuation, keeping closing quotes/brackets attached
+_SENTENCE_RE = re.compile(rf"(?:(?<=[.!?…])|(?<=[.!?…][{_CLOSE}])|(?<=[.!?…][{_CLOSE}][{_CLOSE}]))\s+")
 
 
 def split_sentences(text: str) -> list[str]:
@@ -71,25 +73,29 @@ def split_sentences(text: str) -> list[str]:
 
 
 def _split_long(sentence: str, max_chars: int) -> list[str]:
-    """Split a monster sentence at commas/semicolons, then at spaces."""
+    """Split a monster sentence at commas/semicolons, then at spaces, then hard."""
     if len(sentence) <= max_chars:
         return [sentence]
-    parts, cur = [], ""
-    for piece in re.split(r"(?<=[,;:–—])\s+", sentence):
-        if len(piece) > max_chars:
-            words, piece_cur = piece.split(" "), ""
-            for w in words:
-                if len(piece_cur) + len(w) + 1 > max_chars and piece_cur:
-                    parts.append(piece_cur)
-                    piece_cur = w
-                else:
-                    piece_cur = f"{piece_cur} {w}".strip()
-            piece = piece_cur
+    parts: list[str] = []
+    cur = ""
+
+    def add(piece: str):
+        nonlocal cur
         if len(cur) + len(piece) + 1 > max_chars and cur:
             parts.append(cur)
             cur = piece
         else:
             cur = f"{cur} {piece}".strip()
+
+    for piece in re.split(r"(?<=[,;:–—])\s+", sentence):
+        if len(piece) <= max_chars:
+            add(piece)
+            continue
+        for word in piece.split(" "):
+            while len(word) > max_chars:          # a "word" with no spaces at all
+                add(word[:max_chars])
+                word = word[max_chars:]
+            add(word)
     if cur:
         parts.append(cur)
     return parts

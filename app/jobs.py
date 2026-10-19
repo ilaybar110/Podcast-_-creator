@@ -7,7 +7,6 @@ import os
 import shutil
 import time
 import uuid
-import wave
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -16,7 +15,7 @@ import numpy as np
 from . import audio, quality, script_writer
 from .providers import Provider, ProviderError, SynthesisOptions, Turn, get_provider, with_retries
 from .providers.gemini import GeminiProvider
-from .text_utils import chunk_text, clean_text, format_duration
+from .text_utils import chunk_text, clean_text, format_duration, split_sentences
 
 log = logging.getLogger("podcast")
 
@@ -98,16 +97,18 @@ class Cancelled(Exception):
     pass
 
 
-def default_voices(provider: Provider, language: str) -> tuple[str, str]:
-    voices = provider.voices(language)
+def default_voices(provider: Provider, language: str, voices=None) -> tuple[str, str]:
+    voices = provider.voices(language) if voices is None else voices
     rec = [v for v in voices if v.recommended] or voices
     female = next((v.id for v in rec if v.gender == "female"), rec[0].id if rec else "")
     male = next((v.id for v in rec if v.gender == "male"), female)
     return female, male
 
 
-async def best_take(make, text: str, language: str, job: Job, label: str) -> np.ndarray:
-    """Synthesize, check the take, and retry bad takes (truncated, rambling, dead air)."""
+async def best_take(make, text: str, language: str, job: Job, label: str) -> tuple[np.ndarray, list[str]]:
+    """Synthesize, check the take, and retry bad takes (truncated, rambling, dead air).
+
+    Returns the best take and its remaining problems ([] when clean)."""
     best, best_problems = None, None
     for take in range(MAX_TAKES):
         if job.cancelled:
@@ -116,12 +117,46 @@ async def best_take(make, text: str, language: str, job: Job, label: str) -> np.
         pcm = audio.trim_silence(pcm)
         problems = await asyncio.to_thread(quality.take_problems, pcm, text, language)
         if not problems:
-            return pcm
+            return pcm, []
         log.warning("%s take %d rejected: %s", label, take + 1, problems)
         if best_problems is None or len(problems) < len(best_problems):
             best, best_problems = pcm, problems
-    job.warnings.append(f"{label}: kept best of {MAX_TAKES} takes ({'; '.join(best_problems)})")
-    return best
+    if not _truncated(best_problems):
+        job.warnings.append(f"{label}: kept best of {MAX_TAKES} takes ({'; '.join(best_problems)})")
+    return best, best_problems
+
+
+def _truncated(problems: list[str]) -> bool:
+    return any(p.startswith("too short") for p in problems)
+
+
+def _halves(items: list) -> tuple[list, list]:
+    mid = len(items) // 2
+    return items[:mid], items[mid:]
+
+
+def _join(pcms: list[np.ndarray], gap: float) -> np.ndarray:
+    out = []
+    for i, p in enumerate(pcms):
+        out.append(audio.fade(p))
+        if i < len(pcms) - 1:
+            out.append(audio.silence(gap))
+    return np.concatenate(out)
+
+
+def _never_truncated(label: str) -> ProviderError:
+    # Better to fail loudly than to hand over a podcast with a silently missing passage.
+    return ProviderError(f"{label}: the voice engine keeps cutting this passage short, so it was not "
+                         f"recorded completely. Try again, or try another voice or engine.")
+
+
+def host_names(language: str, g1: str | None, g2: str | None) -> tuple[str, str]:
+    """Host names that match the voices' genders - Hebrew verbs and adjectives depend on it."""
+    names = {"he": {"female": ["Noa", "Maya"], "male": ["Yoni", "Avi"]},
+             "en": {"female": ["Emma", "Lily"], "male": ["Jack", "Ben"]}}[language]
+    first = names.get(g1 or "female", names["female"])[0]
+    pool = names.get(g2 or "male", names["male"])
+    return first, pool[1] if pool[0] == first else pool[0]
 
 
 def _save_part(job: Job, i: int, pcm: np.ndarray) -> Path:
@@ -132,21 +167,22 @@ def _save_part(job: Job, i: int, pcm: np.ndarray) -> Path:
     return path
 
 
-def _assemble(wav_path: Path, segments: list[tuple[Path, float]]) -> np.ndarray:
-    """Stream all parts into one WAV with natural pauses. Returns the first 3 minutes for analysis."""
+def _assemble(mp3_path: Path, segments: list[tuple[Path, float]], warm: bool, title: str) -> np.ndarray:
+    """Stream all parts, with natural pauses, into the encoder. Returns the first 3 minutes for analysis."""
     head, head_len, limit = [], 0, audio.SAMPLE_RATE * 180
-    with wave.open(str(wav_path), "wb") as w:
-        w.setnchannels(1)
-        w.setsampwidth(2)
-        w.setframerate(audio.SAMPLE_RATE)
-        w.writeframes(audio.silence(0.35).tobytes())
+
+    def stream():
+        nonlocal head_len
+        yield audio.silence(0.35)
         for i, (part, gap) in enumerate(segments):
             pcm = audio.pcm_from_bytes(part.read_bytes())
-            w.writeframes(pcm.tobytes())
             if head_len < limit:
                 head.append(pcm)
                 head_len += pcm.size
-            w.writeframes(audio.silence(gap if i < len(segments) - 1 else 0.6).tobytes())
+            yield pcm
+            yield audio.silence(gap if i < len(segments) - 1 else 0.6)
+
+    audio.encode_mp3_stream(stream(), mp3_path, warm, "128k", title)
     return np.concatenate(head)[:limit] if head else np.zeros(0, dtype=np.int16)
 
 
@@ -159,11 +195,16 @@ async def run_job(job: Job) -> None:
         text = clean_text(req.text)
         if not text:
             raise ProviderError("The text is empty after cleanup.")
-        opts = SynthesisOptions(language=req.language, style=req.style, pace=req.pace,
-                                host_names=("Noa", "Yoni") if req.language == "he" else ("Emma", "Jack"))
-        v1_default, v2_default = default_voices(provider, req.language)
+        voices = await asyncio.to_thread(provider.voices, req.language)
+        v1_default, v2_default = default_voices(provider, req.language, voices)
         v1 = req.voice or v1_default
         v2 = req.voice2 or (v2_default if v2_default != v1 else v1_default)
+        if not v1:
+            raise ProviderError(f"{provider.label}: no voices available for this language.")
+        gender = {v.id: v.gender for v in voices}
+        opts = SynthesisOptions(language=req.language, style=req.style, pace=req.pace,
+                                host_names=host_names(req.language, gender.get(v1), gender.get(v2)),
+                                genders=(gender.get(v1, "female"), gender.get(v2, "male")))
 
         if req.mode == "conversation":
             segments = await _conversation_segments(job, provider, text, opts, v1, v2)
@@ -172,11 +213,9 @@ async def run_job(job: Job) -> None:
 
         job.stage = "Mastering audio (warmth EQ, loudness)"
         job.progress = 0.97
-        wav, mp3 = job.dir / "podcast.wav", job.dir / "podcast.mp3"
-        head = await asyncio.to_thread(_assemble, wav, segments)
-        await asyncio.to_thread(audio.encode_mp3, wav, mp3, req.warm_master, "128k", req.title)
+        mp3 = job.dir / "podcast.mp3"
+        head = await asyncio.to_thread(_assemble, mp3, segments, req.warm_master, req.title)
         metrics = await asyncio.to_thread(quality.analyze, head)
-        wav.unlink(missing_ok=True)
         shutil.rmtree(job.dir / "parts", ignore_errors=True)
 
         duration = await asyncio.to_thread(audio.probe_duration, mp3)
@@ -192,7 +231,7 @@ async def run_job(job: Job) -> None:
             "metrics": metrics.to_dict(),
         }
         job.status, job.stage, job.progress = "done", "Ready", 1.0
-    except Cancelled:
+    except (Cancelled, asyncio.CancelledError):
         job.status, job.stage = "cancelled", "Cancelled"
     except ProviderError as e:
         job.status, job.error, job.stage = "error", str(e), "Failed"
@@ -232,11 +271,20 @@ async def _narrator_segments(job, provider, text, opts, voice):
     chunks = chunk_text(text, provider.max_chunk_chars)
     job.stage = f"Recording voice: 0 of {len(chunks)} parts"
 
+    async def speak(text: str, label: str, depth: int = 0) -> np.ndarray:
+        pcm, problems = await best_take(lambda: provider.synthesize(text, voice, opts), text,
+                                        opts.language, job, label)
+        if _truncated(problems):
+            sentences = split_sentences(text)
+            if depth >= 3 or len(sentences) < 2:
+                raise _never_truncated(label)
+            a, b = _halves(sentences)       # shorter requests are cut off far less often
+            return _join([await speak(" ".join(a), label, depth + 1),
+                          await speak(" ".join(b), label, depth + 1)], 0.35)
+        return pcm
+
     async def worker(i, paras):
-        chunk = "\n\n".join(paras)
-        pcm = await best_take(lambda: provider.synthesize(chunk, voice, opts), chunk,
-                              opts.language, job, f"Part {i + 1}")
-        return _save_part(job, i, pcm)
+        return _save_part(job, i, await speak("\n\n".join(paras), f"Part {i + 1}"))
 
     pcms = await _run_parallel(job, provider, chunks, worker, 0.02, 0.94)
     return [(p, CHUNK_PAUSE_SEC) for p in pcms]
@@ -252,7 +300,8 @@ async def _conversation_segments(job, provider, text, opts, v1, v2):
         job.progress = 0.02 + 0.25 * i / n
         job.stage = f"Writing the two-host script: part {i} of {n}"
 
-    turns = await script_writer.write_dialogue(gemini, text, opts.language, opts.host_names, on_progress)
+    turns = await script_writer.write_dialogue(gemini, text, opts.language, opts.host_names, on_progress,
+                                               opts.genders)
     job.script = [{"speaker": t.speaker, "text": t.text} for t in turns]
     a, b = opts.host_names
     voices = {a: v1, b: v2}
@@ -260,18 +309,28 @@ async def _conversation_segments(job, provider, text, opts, v1, v2):
     if provider.supports_dialogue:
         batches = script_writer.batch_turns(turns, provider.max_chunk_chars)
 
-        async def worker(i, batch: list[Turn]):
+        async def speak(batch: list[Turn], label: str) -> np.ndarray:
             chunk = " ".join(t.text for t in batch)
-            pcm = await best_take(lambda: provider.synthesize_dialogue(batch, voices, opts), chunk,
-                                  opts.language, job, f"Part {i + 1}")
-            return _save_part(job, i, pcm)
+            pcm, problems = await best_take(lambda: provider.synthesize_dialogue(batch, voices, opts),
+                                            chunk, opts.language, job, label)
+            if _truncated(problems):
+                if len(batch) < 2:
+                    raise _never_truncated(label)
+                a, b = _halves(batch)
+                return _join([await speak(a, label), await speak(b, label)], TURN_GAP_SEC)
+            return pcm
+
+        async def worker(i, batch: list[Turn]):
+            return _save_part(job, i, await speak(batch, f"Part {i + 1}"))
 
         pcms = await _run_parallel(job, provider, batches, worker, 0.28, 0.68)
         return [(p, TURN_GAP_SEC + 0.1) for p in pcms]
 
     async def worker(i, turn: Turn):
-        pcm = await best_take(lambda: provider.synthesize(turn.text, voices[turn.speaker], opts),
-                              turn.text, opts.language, job, f"Line {i + 1}")
+        pcm, problems = await best_take(lambda: provider.synthesize(turn.text, voices[turn.speaker], opts),
+                                        turn.text, opts.language, job, f"Line {i + 1}")
+        if _truncated(problems):
+            raise _never_truncated(f"Line {i + 1}")
         return _save_part(job, i, pcm)
 
     pcms = await _run_parallel(job, provider, turns, worker, 0.28, 0.68)

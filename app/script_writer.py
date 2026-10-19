@@ -28,18 +28,19 @@ def parse_dialogue(raw: str, hosts: tuple[str, str]) -> list[Turn]:
             text = re.sub(r"\[[^\]]*\]|\((?:laughs?|צוחק(?:ת)?|music|מוזיקה)[^)]*\)", "", text).strip()
             if text:
                 turns.append(Turn(speaker, text))
-        elif turns and not re.match(r"^[A-Za-z֐-׿ ]{1,20}:", line):
+        elif turns and not re.match(r"^[A-Za-z]{2,20}\s*:", line):
             turns[-1].text += " " + re.sub(r"[*_#`]", "", line)   # wrapped continuation
     return turns
 
 
 async def write_dialogue(gemini: GeminiProvider, text: str, language: str,
-                         hosts: tuple[str, str], on_progress=None) -> list[Turn]:
+                         hosts: tuple[str, str], on_progress=None,
+                         genders: tuple[str, str] = ("female", "male")) -> list[Turn]:
     parts = [" ".join(p) for p in chunk_text(text, SOURCE_PART_CHARS)]
     turns: list[Turn] = []
     for i, part in enumerate(parts, 1):
         tail = "\n".join(f"{t.speaker}: {t.text}" for t in turns[-6:])
-        prompt = prompts.podcast_script_prompt(part, language, hosts, i, len(parts), tail)
+        prompt = prompts.podcast_script_prompt(part, language, hosts, i, len(parts), tail, genders)
 
         async def attempt():
             raw = await gemini.write_text(prompt)

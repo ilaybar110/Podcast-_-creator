@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import asyncio
 import os
+import re
 
 import numpy as np
 
@@ -54,7 +55,8 @@ class EdgeProvider(Provider):
                 if item["type"] == "audio":
                     buf += item["data"]
         except Exception as e:  # edge-tts raises many network exception types
-            raise ProviderError(f"Microsoft TTS error: {e}", retryable=True)
+            msg = re.sub(r"\w+://\S+", "<url>", str(e))   # never echo proxy URLs/credentials
+            raise ProviderError(f"Microsoft TTS error: {msg}", retryable=True)
         if not buf:
             raise ProviderError("Microsoft TTS returned no audio", retryable=True)
         return await asyncio.to_thread(decode_to_pcm, bytes(buf), "mp3")

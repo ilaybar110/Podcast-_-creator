@@ -154,6 +154,7 @@ def test_gemini_request_and_audio_parsing(monkeypatch):
                                             SynthesisOptions(language="he")))
     spk = seen["body"]["generationConfig"]["speechConfig"]["multiSpeakerVoiceConfig"]["speakerVoiceConfigs"]
     assert {s["speaker"] for s in spk} == {"Noa", "Yoni"}
+    assert seen["body"]["generationConfig"]["speechConfig"]["languageCode"] == "he-IL"
     assert "Noa: היי\nYoni: שלום" in seen["body"]["contents"][0]["parts"][0]["text"]
 
 
@@ -192,7 +193,7 @@ def test_full_narrator_job_reports_exact_duration(client):
 
 
 def test_conversation_job(client, monkeypatch):
-    async def fake_dialogue(gemini, text, language, hosts, on_progress=None):
+    async def fake_dialogue(gemini, text, language, hosts, on_progress=None, genders=None):
         return [Turn(hosts[i % 2], f"שורה מספר {i} בשיחה בין המגישים, עם קצת תוכן.") for i in range(30)]
 
     monkeypatch.setattr(script_writer, "write_dialogue", fake_dialogue)
@@ -210,3 +211,57 @@ def test_extract_and_config(client):
     cfg = client.get("/api/config?language=he").json()
     assert {e["id"] for e in cfg["engines"]} >= {"gemini", "elevenlabs", "edge"}
     assert client.get("/").status_code == 200
+
+
+# ------------------------------------------------------- review regressions
+def test_long_sentence_keeps_order_and_quotes():
+    from app.text_utils import _split_long, split_sentences
+    s = "Short intro, " + "word " * 60 + "end."
+    parts = _split_long(s, 100)
+    assert parts[0].startswith("Short intro") and " ".join(parts).split() == s.split()
+    assert split_sentences("הוא אמר ״שלום.״ ואז הלך.") == ["הוא אמר ״שלום.״", "ואז הלך."]
+    text = 'He said "hi." ' * 200
+    assert " ".join(" ".join(c) for c in chunk_text(text, 300)).count('"') == 400
+    assert all(len(c[0]) <= 1000 for c in chunk_text("x" * 5000, 1000))
+
+
+def test_bullets_keep_paragraph_break():
+    assert clean_text("Intro.\n\n- item one") == "Intro.\n\nitem one"
+
+
+def test_host_names_follow_voice_gender():
+    from app.jobs import host_names
+    assert host_names("he", "female", "male") == ("Noa", "Yoni")
+    assert host_names("he", "male", "male") == ("Yoni", "Avi")
+    assert host_names("he", "female", "female") == ("Noa", "Maya")
+
+
+def test_always_truncated_part_is_split_then_fails_loudly(client, monkeypatch):
+    async def short_unless_tiny(self, text, voice, opts):
+        FakeProvider.calls += 1
+        return speechlike(len(text) / 13.0 if len(text) < 120 else 0.3)
+
+    monkeypatch.setattr(FakeProvider, "synthesize", short_unless_tiny)
+    text = "זה משפט ראשון שהוא די ארוך כדי לבדוק. וזה משפט שני שהוא גם די ארוך לבדיקה. ומשפט שלישי אחרון."
+    j = wait(client, client.post("/api/jobs", json={"text": text, "provider": "fake"}).json()["id"])
+    assert j["status"] == "done", j          # recovered by recording shorter pieces
+    assert j["result"]["duration_sec"] > 0.6 * len(text) / 13.0
+
+    async def always_short(self, text, voice, opts):
+        return speechlike(0.2)
+
+    monkeypatch.setattr(FakeProvider, "synthesize", always_short)
+    j = wait(client, client.post("/api/jobs", json={"text": text, "provider": "fake"}).json()["id"])
+    assert j["status"] == "error" and "cutting this passage short" in j["error"]
+
+
+def test_cancel_stops_job(client, monkeypatch):
+    async def slow(self, text, voice, opts):
+        await asyncio.sleep(30)
+
+    monkeypatch.setattr(FakeProvider, "synthesize", slow)
+    jid = client.post("/api/jobs", json={"text": "שלום " * 300, "provider": "fake"}).json()["id"]
+    time.sleep(0.5)
+    client.post(f"/api/jobs/{jid}/cancel")
+    t0 = time.time()
+    assert wait(client, jid, timeout=5)["status"] == "cancelled" and time.time() - t0 < 5

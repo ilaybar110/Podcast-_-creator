@@ -38,6 +38,7 @@ class SynthesisOptions:
     style: str = "warm"     # key into prompts.STYLES
     pace: str = "natural"   # relaxed | natural | brisk
     host_names: tuple[str, str] = ("Noa", "Yoni")
+    genders: tuple[str, str] = ("female", "male")   # of host_names / the chosen voices
 
 
 class Provider:

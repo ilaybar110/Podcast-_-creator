@@ -55,6 +55,8 @@ _VOICES = [
     ("Alnilam", "male", "Firm", False), ("Schedar", "male", "Even", False),
 ]
 
+BLOCK_REASONS = {"SAFETY", "PROHIBITED_CONTENT", "BLOCKLIST", "SPII", "RECITATION", "OTHER_BLOCK"}
+
 _model_cache: dict[str, tuple[float, list[str]]] = {}
 
 
@@ -95,11 +97,16 @@ class GeminiProvider(Provider):
             token = None
             for _ in range(10):
                 params = {"pageSize": 1000, **({"pageToken": token} if token else {})}
-                r = await client.get(f"{API}/models", params=params,
-                                     headers={"x-goog-api-key": self.api_key})
+                try:
+                    r = await client.get(f"{API}/models", params=params,
+                                         headers={"x-goog-api-key": self.api_key})
+                except httpx.TransportError as e:
+                    raise ProviderError(f"Network error talking to Gemini: {e}", retryable=True)
                 if r.status_code in (400, 401, 403):
                     raise ProviderError("Gemini rejected the API key. Check GEMINI_API_KEY.")
-                r.raise_for_status()
+                if r.status_code != 200:
+                    raise ProviderError(f"Gemini {r.status_code} while listing models",
+                                        retryable=r.status_code in (429, 500, 502, 503, 504))
                 data = r.json()
                 names += [m["name"].split("/", 1)[1] for m in data.get("models", [])
                           if "generateContent" in m.get("supportedGenerationMethods", [])]
@@ -170,16 +177,17 @@ class GeminiProvider(Provider):
                     rate = int(m.group(1)) if m else 24000
                     chunks.append(base64.b64decode(inline["data"]))
         if not chunks:
-            reason = (data.get("candidates") or [{}])[0].get("finishReason", "no audio")
-            raise ProviderError(f"Gemini returned no audio ({reason})", retryable=True)
+            reason = (data.get("candidates") or [{}])[0].get("finishReason") \
+                or data.get("promptFeedback", {}).get("blockReason", "no audio")
+            blocked = reason in BLOCK_REASONS
+            raise ProviderError(
+                "Gemini refused to voice this passage (content filter)" if blocked
+                else f"Gemini returned no audio ({reason})", retryable=not blocked)
         return resample(pcm_from_bytes(b"".join(chunks)), rate)
 
     # -------------------------------------------------------------- public
-    async def synthesize(self, text: str, voice: str, opts: SynthesisOptions) -> np.ndarray:
-        persona = f"{opts.host_names[0]}, a warm podcast host"
-        prompt = prompts.narrator_prompt(text, opts.language, opts.style, opts.pace, persona)
-        cfg = {"voiceConfig": {"prebuiltVoiceConfig": {"voiceName": voice}}}
-        if opts.language == "he":
+    async def _speak_lang(self, prompt: str, cfg: dict, language: str) -> np.ndarray:
+        if language == "he":
             cfg["languageCode"] = "he-IL"
         try:
             return await self._speak(prompt, cfg)
@@ -189,16 +197,24 @@ class GeminiProvider(Provider):
                 return await self._speak(prompt, cfg)
             raise
 
+    async def synthesize(self, text: str, voice: str, opts: SynthesisOptions) -> np.ndarray:
+        gender = next((g for n, g, _, _ in _VOICES if n == voice), opts.genders[0])
+        persona = opts.host_names[0] if gender == opts.genders[0] else opts.host_names[1]
+        prompt = prompts.narrator_prompt(text, opts.language, opts.style, opts.pace,
+                                         f"{persona}, a warm podcast host", gender)
+        cfg = {"voiceConfig": {"prebuiltVoiceConfig": {"voiceName": voice}}}
+        return await self._speak_lang(prompt, cfg, opts.language)
+
     async def synthesize_dialogue(self, turns: list[Turn], voices: dict[str, str],
                                   opts: SynthesisOptions) -> np.ndarray:
         transcript = "\n".join(f"{t.speaker}: {t.text}" for t in turns)
         prompt = prompts.dialogue_prompt(transcript, opts.language, opts.style, opts.pace,
-                                         opts.host_names)
+                                         opts.host_names, opts.genders)
         cfg = {"multiSpeakerVoiceConfig": {"speakerVoiceConfigs": [
             {"speaker": spk, "voiceConfig": {"prebuiltVoiceConfig": {"voiceName": v}}}
             for spk, v in voices.items()
         ]}}
-        return await self._speak(prompt, cfg)
+        return await self._speak_lang(prompt, cfg, opts.language)
 
     async def write_text(self, prompt: str, temperature: float = 0.9) -> str:
         model = await self.text_model()

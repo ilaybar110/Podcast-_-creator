@@ -3,6 +3,7 @@ models produce poor Hebrew. Set ELEVENLABS_API_KEY."""
 from __future__ import annotations
 
 import os
+import re
 import time
 
 import httpx
@@ -49,6 +50,8 @@ class ElevenLabsProvider(Provider):
         return out
 
     async def synthesize(self, text: str, voice: str, opts: SynthesisOptions) -> np.ndarray:
+        if not re.fullmatch(r"[A-Za-z0-9]{8,40}", voice or ""):
+            raise ProviderError("Invalid ElevenLabs voice id")
         body = {
             "text": text,
             "model_id": self.model,

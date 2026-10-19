@@ -1,8 +1,10 @@
 """FastAPI app: text in, warm human podcast MP3 out."""
 from __future__ import annotations
 
+import asyncio
 import logging
 import os
+import tempfile
 import time
 from pathlib import Path
 
@@ -13,7 +15,7 @@ from pydantic import BaseModel, Field
 
 from . import audio, prompts
 from .extract import extract_text
-from .jobs import JOBS, JobRequest, create_job, default_voices
+from .jobs import JOBS, JobRequest, create_job, default_voices, host_names
 from .providers import PROVIDER_CLASSES, ProviderError, SynthesisOptions, get_provider, with_retries
 from .text_utils import clean_text, detect_language, estimate_seconds, format_duration
 
@@ -26,7 +28,7 @@ app = FastAPI(title="Podcast Creator")
 app.mount("/static", StaticFiles(directory=STATIC), name="static")
 
 PREVIEW_TEXT = {
-    "he": "היי, שלום לכולם וברוכים הבאים. אני ממש שמחה שאתם פה איתנו היום, "
+    "he": "היי, שלום לכולם וברוכים הבאים. אני ממש {glad} שאתם פה איתנו היום, "
           "כי יש לנו נושא מרתק לדבר עליו. אז תכינו לכם כוס קפה, תתרווחו, ובואו נתחיל.",
     "en": "Hey everyone, and welcome back. I'm really glad you're here with us today, "
           "because we've got a fascinating story to talk about. So grab a coffee, get comfy, "
@@ -85,11 +87,14 @@ def estimate(body: EstimateIn):
 
 @app.post("/api/extract")
 async def extract(file: UploadFile = File(...)):
-    data = await file.read()
-    if len(data) > MAX_UPLOAD_MB * 1024 * 1024:
-        raise HTTPException(413, f"File is larger than {MAX_UPLOAD_MB} MB")
+    limit = MAX_UPLOAD_MB * 1024 * 1024
+    buf = bytearray()
+    while chunk := await file.read(1 << 20):
+        buf += chunk
+        if len(buf) > limit:
+            raise HTTPException(413, f"File is larger than {MAX_UPLOAD_MB} MB")
     try:
-        text = extract_text(file.filename or "file.txt", data)
+        text = await asyncio.to_thread(extract_text, file.filename or "file.txt", bytes(buf))
     except Exception as e:
         raise HTTPException(400, f"Could not read this file: {e}")
     return {"text": text, "language": detect_language(text)}
@@ -105,6 +110,8 @@ class PreviewIn(BaseModel):
 
 @app.post("/api/preview")
 async def preview(body: PreviewIn, request: Request):
+    if body.language not in PREVIEW_TEXT or body.style not in prompts.STYLES or body.pace not in prompts.PACES:
+        raise HTTPException(400, "Invalid language, style or pace")
     try:
         provider = get_provider(body.provider, _keys(request))
     except ProviderError as e:
@@ -113,21 +120,27 @@ async def preview(body: PreviewIn, request: Request):
     hit = _preview_cache.get(key)
     if hit and time.time() - hit[0] < 6 * 3600:
         return Response(hit[1], media_type="audio/mpeg")
+    voices = await asyncio.to_thread(provider.voices, body.language)
+    gender = next((v.gender for v in voices if v.id == body.voice), "female")
+    names = host_names(body.language, gender, None)
     opts = SynthesisOptions(language=body.language, style=body.style, pace=body.pace,
-                            host_names=("Noa", "Yoni") if body.language == "he" else ("Emma", "Jack"))
+                            host_names=names, genders=(gender, "male" if gender == "female" else "female"))
+    text = PREVIEW_TEXT[body.language].format(glad="שמח" if gender == "male" else "שמחה")
     try:
-        pcm = await with_retries(lambda: provider.synthesize(PREVIEW_TEXT[body.language], body.voice, opts),
-                                 attempts=3)
+        pcm = await with_retries(lambda: provider.synthesize(text, body.voice, opts), attempts=3)
     except ProviderError as e:
         raise HTTPException(502, str(e))
-    import tempfile
+    data = await asyncio.to_thread(_preview_mp3, pcm)
+    _preview_cache[key] = (time.time(), data)
+    return Response(data, media_type="audio/mpeg")
+
+
+def _preview_mp3(pcm) -> bytes:
     with tempfile.TemporaryDirectory() as tmp:
         wav, mp3 = Path(tmp) / "p.wav", Path(tmp) / "p.mp3"
         audio.write_wav(wav, audio.trim_silence(pcm))
         audio.encode_mp3(wav, mp3, warm=True, bitrate="96k")
-        data = mp3.read_bytes()
-    _preview_cache[key] = (time.time(), data)
-    return Response(data, media_type="audio/mpeg")
+        return mp3.read_bytes()
 
 
 class JobIn(BaseModel):
@@ -181,6 +194,9 @@ def job_script(job_id: str):
 def cancel(job_id: str):
     job = _job(job_id)
     job.cancelled = True
+    task = getattr(job, "task", None)
+    if task and not task.done():
+        task.cancel()          # stop in-flight requests and backoff sleeps right away
     return job.public()
 
 

@@ -98,17 +98,36 @@ WARM_FILTER = (
 PLAIN_FILTER = "loudnorm=I=-16:TP=-1.5:LRA=11"
 
 
-def encode_mp3(wav_path: Path, mp3_path: Path, warm: bool = True, bitrate: str = "128k",
-               title: str | None = None) -> None:
-    cmd = [
-        "ffmpeg", "-hide_banner", "-loglevel", "error", "-y", "-i", str(wav_path),
-        "-af", WARM_FILTER if warm else PLAIN_FILTER,
-        "-ar", "44100", "-ac", "1", "-codec:a", "libmp3lame", "-b:a", bitrate,
-    ]
+def _mp3_cmd(src: list[str], mp3_path: Path, warm: bool, bitrate: str, title: str | None) -> list[str]:
+    cmd = ["ffmpeg", "-hide_banner", "-loglevel", "error", "-y", *src,
+           "-af", WARM_FILTER if warm else PLAIN_FILTER,
+           "-ar", "44100", "-ac", "1", "-codec:a", "libmp3lame", "-b:a", bitrate]
     if title:
         cmd += ["-metadata", f"title={title}", "-metadata", "genre=Podcast"]
-    cmd.append(str(mp3_path))
-    subprocess.run(cmd, check=True, capture_output=True)
+    return cmd + [str(mp3_path)]
+
+
+def encode_mp3(wav_path: Path, mp3_path: Path, warm: bool = True, bitrate: str = "128k",
+               title: str | None = None) -> None:
+    subprocess.run(_mp3_cmd(["-i", str(wav_path)], mp3_path, warm, bitrate, title),
+                   check=True, capture_output=True)
+
+
+def encode_mp3_stream(pcm_iter, mp3_path: Path, warm: bool = True, bitrate: str = "128k",
+                      title: str | None = None) -> None:
+    """Pipe raw PCM straight into the encoder - no WAV size limit, constant memory."""
+    src = ["-f", "s16le", "-ar", str(SAMPLE_RATE), "-ac", "1", "-i", "pipe:0"]
+    proc = subprocess.Popen(_mp3_cmd(src, mp3_path, warm, bitrate, title),
+                            stdin=subprocess.PIPE, stderr=subprocess.PIPE)
+    try:
+        for pcm in pcm_iter:
+            proc.stdin.write(pcm.astype("<i2").tobytes())
+        proc.stdin.close()
+    except BrokenPipeError:
+        pass
+    err = proc.stderr.read().decode(errors="replace")
+    if proc.wait() != 0:
+        raise RuntimeError(f"ffmpeg failed: {err[-500:]}")
 
 
 def probe_duration(path: Path) -> float:
