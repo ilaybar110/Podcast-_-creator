@@ -520,6 +520,123 @@ def test_web_topic_research_and_script():
     assert out.returncode == 0, out.stderr
 
 
+# ------------------------------------------------------- seams, pauses, loudness
+def test_trim_keeps_preroll_and_soft_tail():
+    t = np.arange(SR) / SR
+    speech = (0.3 * np.sin(2 * np.pi * 220 * t) * 32767).astype(np.int16)
+    soft = (10 ** (-52 / 20) * np.sin(2 * np.pi * 300 * t[: SR // 5]) * 32767).astype(np.int16)
+    z = np.zeros(SR, dtype=np.int16)
+    out = audio.trim_silence(np.concatenate([z, speech, z]))
+    assert abs(out.size - (SR + 0.15 * SR + 0.25 * SR)) <= 0.02 * SR
+    first = int(np.argmax(np.abs(out) > 100))
+    assert 0.13 * SR <= first <= 0.17 * SR
+    out = audio.trim_silence(np.concatenate([z[: SR // 2], speech, soft, z]))
+    tail = out[-int(0.25 * SR):].astype(np.float64) / 32768
+    assert np.sqrt((tail ** 2).mean()) > 10 ** (-60 / 20)           # the soft ending survived
+    assert audio.trim_silence(z).size == 0
+
+
+def test_fade_is_smooth_and_ends_at_zero():
+    pcm = (0.5 * np.sin(2 * np.pi * 220 * np.arange(SR) / SR) * 32767).astype(np.int16)
+    f = audio.fade(pcm)
+    assert f.dtype == np.int16 and f[0] == 0 and abs(int(f[-1])) <= 1
+    assert audio.FADE_IN_MS == 10 and audio.FADE_OUT_MS == 30
+    n = int(SR * 0.02)                                  # 20 ms from the end: still fading
+    near = np.abs(f[-n - 50:-n]).max()
+    assert 0.2 * 0.5 * 32767 < near < 0.9 * 0.5 * 32767
+
+
+def test_room_tone_level_and_determinism():
+    a, b = audio.RoomTone(-65.0, seed=1234), audio.RoomTone(-65.0, seed=1234)
+    x = a.take(SR * 20)                                 # longer than the loop: wraps seamlessly
+    assert np.array_equal(x[:1000], b.take(1000))
+    assert abs(20 * np.log10(np.sqrt((x.astype(np.float64) ** 2).mean())) + 65) < 0.3
+    assert 20 * np.log10(np.abs(x).max()) < -50
+    jump = np.abs(np.diff(x)).max()
+    loop = a.loop.size
+    assert abs(float(x[loop]) - float(x[loop - 1])) <= jump    # no seam at the loop point
+
+
+def test_loudness_measure_and_part_matching():
+    t = np.arange(SR * 5) / SR
+    sine = (0.1 * np.sin(2 * np.pi * 1000 * t) * 32767).astype(np.int16)
+    assert abs(audio.loudness_lufs(sine) - (-23.0)) < 0.3          # BS.1770: 1 kHz at -20 dBFS peak
+    assert audio.loudness_lufs(np.zeros(SR * 2, dtype=np.int16)) == -70.0
+    assert audio.match_part_gains([-20, -23, -30, -10, -80]) == [-1.5, 1.5, 3.0, -3.0, 0.0]
+    assert audio.match_part_gains([-90.0]) == [0.0]
+    assert all(abs(g) <= 3 for g in audio.match_part_gains([-14, -40, -22, -21]))
+
+
+def test_pause_kinds_follow_the_text():
+    from app.text_utils import BREAK_PAUSE_SEC, break_pauses, chunk_text_with_breaks, turn_gap_sec
+    text = clean_text("Intro\n\n" + "First paragraph sentence here. " * 10 + "\n\n" + "Second paragraph. " * 16
+                      + "\n\nChapter two\n\n" + "Long one, with words. " * 40)
+    chunks, breaks = chunk_text_with_breaks(text, 300)
+    assert chunks == chunk_text(text, 300) and len(breaks) == len(chunks) - 1
+    assert {"sentence", "paragraph", "section"} <= set(breaks)
+    assert chunks[breaks.index("section") + 1][0] == "Chapter two."
+    pauses = break_pauses(breaks, 0.6)
+    assert pauses[breaks.index("section")] == 1.1 and pauses[-1] == 0.6
+    assert BREAK_PAUSE_SEC == {"sentence": 0.35, "paragraph": 0.7, "section": 1.1}
+    turn = lambda s: Turn("Noa", s)   # noqa: E731
+    assert turn_gap_sec(turn("hi"), turn("Yes, exactly.")) == 0.25
+    assert turn_gap_sec(turn("hi"), turn("So, what about sleep?")) == 0.5
+    assert turn_gap_sec(turn("hi"), {"text": "אז, בוא נדבר על שינה."}) == 0.5
+    assert turn_gap_sec(turn("hi"), turn("אזור הנוחות שלנו")) == 0.25
+    assert turn_gap_sec(turn("hi"), turn("word " * 80)) == 0.5
+
+
+def test_web_pause_kinds_match_python():
+    import json
+    import shutil
+    import subprocess
+    from pathlib import Path
+    from app.text_utils import chunk_text_with_breaks
+    if not shutil.which("node"):
+        pytest.skip("node not installed")
+    samples = [
+        "# Title\n\nIntro line that wraps\nonto the next line.\n\nChapter one\n\n" + "A sentence. " * 300,
+        "\n\n".join(f"כותרת {i}\n\n" + "משפט בדיקה ארוך, עם פסיקים. " * (i % 9 + 1) for i in range(40)),
+    ]
+    js = Path(__file__).resolve().parent.parent / "docs" / "js" / "text.js"
+    script = (f"import('{js.as_posix()}').then(m => {{ const s = JSON.parse(require('fs').readFileSync(0, 'utf8'));"
+              "process.stdout.write(JSON.stringify(s.map(t => m.chunkTextWithBreaks(m.cleanText(t), 500).breaks))); })")
+    out = subprocess.run(["node", "-e", script], input=json.dumps(samples), capture_output=True, text=True, check=True)
+    assert json.loads(out.stdout) == [chunk_text_with_breaks(clean_text(t), 500)[1] for t in samples]
+
+
+def test_mastering_is_linear_limited_and_fills_gaps_with_room_tone(tmp_path):
+    """Synthetic episode: takes at different levels (one with a plosive) through the real ffmpeg chain."""
+    rng = np.random.default_rng(3)
+
+    def take(amp, sec, plosive=0.0):
+        t = np.arange(int(SR * sec)) / SR
+        x = amp * (0.6 * np.sin(2 * np.pi * 180 * t) + 0.3 * np.sin(2 * np.pi * 360 * t))
+        x += amp * 0.3 * np.convolve(rng.standard_normal(t.size), np.ones(6) / 6, "same")
+        x[SR: SR + 120] += plosive
+        return audio.fade((np.clip(x, -1, 1) * 32767).astype(np.int16))
+
+    parts = [take(0.06, 3), take(0.02, 3), take(0.2, 3, plosive=0.9)]
+    gains = [10 ** (g / 20) for g in audio.match_part_gains([audio.loudness_lufs(p) for p in parts])]
+    gaps = [0.7, 1.1, 0.6]
+    stream = [audio.silence(0.35)]
+    for p, g, gap in zip(parts, gains, gaps):
+        stream += [p.astype(np.float32) * g / 32768, audio.silence(gap)]
+    mp3 = tmp_path / "e.mp3"
+    gain_db = audio.encode_mp3_stream(stream, mp3, warm=True, bitrate="128k")
+    assert 0 < gain_db <= audio.MAX_GAIN_DB
+    out = audio.decode_to_pcm(mp3.read_bytes()).astype(np.float64) / 32768
+    assert 20 * np.log10(np.abs(out).max()) < -0.3              # limiter at -1 dBFS (+ mp3 overshoot)
+    assert abs(audio.loudness_lufs(out.astype(np.float32)) - audio.TARGET_LUFS) < 1.5
+    pos = 0.35
+    for i, gap in enumerate(gaps):
+        pos += parts[i].size / SR
+        seg = out[int((pos + 0.12) * SR): int((pos + gap - 0.12) * SR)]
+        level = 20 * np.log10(np.sqrt((seg ** 2).mean()) + 1e-12)
+        assert -67 < level < -63, f"gap {i} at {level:.1f} dBFS"     # room tone, not digital zero
+        pos += gap
+
+
 def _run_node_test(name):
     import shutil
     import subprocess
@@ -541,3 +658,7 @@ def test_web_job_retakes_quota_and_resume():
 
 def test_web_hebrew_speech_prep_matches_python():
     _run_node_test("web_hebrew_test.mjs")
+
+
+def test_web_audio_functions():
+    _run_node_test("web_audio_test.mjs")

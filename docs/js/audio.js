@@ -2,6 +2,9 @@
 // (port of app/audio.py + app/quality.py). Parts live in IndexedDB so long podcasts
 // don't have to fit in a phone's memory, and paused jobs survive closing the page.
 import { CHARS_PER_SECOND } from "./text.js";
+import "./dsp.js";     // plain script shared with the encoder worker: sets globalThis.PodcastDSP
+
+export const { RoomTone, PeakLimiter } = globalThis.PodcastDSP;
 
 export const SAMPLE_RATE = 24000;
 
@@ -28,21 +31,30 @@ function frameDb(pcm, win) {
   return db;
 }
 
-/** Trim leading/trailing silence so the pauses we insert are consistent. */
-export function trimSilence(pcm, thresholdDb = -45, keepSec = 0.06) {
+export const TRIM_PRE_SEC = 0.15, TRIM_POST_SEC = 0.25;   // keep the breath before, the soft ending after
+export const FADE_IN_MS = 10, FADE_OUT_MS = 30;
+
+/**
+ * Trim leading/trailing silence so the pauses we insert are consistent. Keeps a pre-roll and
+ * a longer tail, so soft word endings (common in Hebrew) and breaths are never clipped.
+ */
+export function trimSilence(pcm, thresholdDb = -45, preSec = TRIM_PRE_SEC, postSec = TRIM_POST_SEC) {
   const win = SAMPLE_RATE * 0.02;
   const db = frameDb(pcm, win);
   let first = -1, last = -1;
   for (let i = 0; i < db.length; i++) if (db[i] > thresholdDb) { if (first < 0) first = i; last = i; }
   if (first < 0) return pcm.subarray(0, 0);
-  const keep = SAMPLE_RATE * keepSec;
-  return pcm.slice(Math.max(0, first * win - keep), Math.min(pcm.length, (last + 1) * win + keep));
+  return pcm.slice(Math.max(0, first * win - Math.round(SAMPLE_RATE * preSec)),
+    Math.min(pcm.length, (last + 1) * win + Math.round(SAMPLE_RATE * postSec)));
 }
 
-export function fade(pcm, ms = 8) {
-  const n = Math.min(Math.floor(SAMPLE_RATE * ms / 1000), pcm.length >> 1);
+/** Raised-cosine fade in/out so joins never click. */
+export function fade(pcm, inMs = FADE_IN_MS, outMs = FADE_OUT_MS) {
   const out = pcm.slice();
-  for (let i = 0; i < n; i++) { const g = i / n; out[i] *= g; out[out.length - 1 - i] *= g; }
+  const nIn = Math.min(Math.floor(SAMPLE_RATE * inMs / 1000), pcm.length >> 1);
+  const nOut = Math.min(Math.floor(SAMPLE_RATE * outMs / 1000), pcm.length >> 1);
+  for (let i = 0; i < nIn; i++) out[i] *= 0.5 - 0.5 * Math.cos(Math.PI * i / nIn);
+  for (let i = 0; i < nOut; i++) out[out.length - 1 - i] *= 0.5 - 0.5 * Math.cos(Math.PI * i / nOut);
   return out;
 }
 
@@ -113,6 +125,11 @@ export class LoudnessMeter {
       this.blocks.push(s / win);
     }
   }
+  /** Add another meter's blocks as if its audio were `gainDb` louder. */
+  merge(other, gainDb = 0) {
+    const g = 10 ** (gainDb / 10);
+    for (const e of other.blocks) this.blocks.push(e * g);
+  }
   integratedDb() {
     const lufs = (e) => -0.691 + 10 * Math.log10(e + 1e-12);
     const abs = this.blocks.filter((e) => lufs(e) > -70);
@@ -122,6 +139,22 @@ export class LoudnessMeter {
     return -0.691 + 10 * Math.log10(rel.reduce((a, b) => a + b, 0) / rel.length);
   }
 }
+
+/**
+ * Per-part loudness matching: the gain (dB) that nudges each part toward the episode's median
+ * loudness, clamped to +-maxDb so a quiet or shouted line keeps some of its character.
+ * Parts too short or too quiet to measure (<= -70 LUFS) are left alone.
+ */
+export const PART_MATCH_MAX_DB = 3;
+export function matchPartGains(partLufs, maxDb = PART_MATCH_MAX_DB) {
+  const ok = partLufs.filter((v) => Number.isFinite(v) && v > -70).sort((a, b) => a - b);
+  if (!ok.length) return partLufs.map(() => 0);
+  const mid = ok.length >> 1;
+  const median = ok.length % 2 ? ok[mid] : (ok[mid - 1] + ok[mid]) / 2;
+  return partLufs.map((v) => (Number.isFinite(v) && v > -70 ? Math.max(-maxDb, Math.min(maxDb, median - v)) : 0));
+}
+
+export const dbToGain = (db) => 10 ** (db / 20);
 
 export function startEncoder(kbps = 96) {
   const worker = new Worker(new URL("./encoder-worker.js", import.meta.url));

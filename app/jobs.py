@@ -17,7 +17,8 @@ from .providers import Provider, ProviderError, SynthesisOptions, Turn, get_prov
 from .budget import QuotaExhausted
 from .providers.gemini import GeminiProvider
 from .speech import prepare_for_speech
-from .text_utils import chunk_text, clean_text, format_duration, split_sentences
+from .text_utils import (BREAK_PAUSE_SEC, break_pauses, chunk_text_with_breaks, clean_text, format_duration,
+                         split_sentences, turn_gap_sec)
 
 log = logging.getLogger("podcast")
 
@@ -25,8 +26,8 @@ DATA_DIR = Path(os.getenv("DATA_DIR", Path(__file__).resolve().parent.parent / "
 JOB_TTL_SEC = float(os.getenv("JOB_TTL_HOURS", "24")) * 3600
 PAUSED_TTL_SEC = 7 * 24 * 3600   # paused (free quota) jobs wait up to a week to be continued
 MAX_TAKES = 3
-CHUNK_PAUSE_SEC = 0.75
-TURN_GAP_SEC = 0.3
+LEAD_IN_SEC = 0.35
+TAIL_SEC = 0.6
 
 
 @dataclass
@@ -196,19 +197,24 @@ def _waiting(job: Job, seconds: float) -> None:
 def _assemble(mp3_path: Path, segments: list[tuple[Path, float]], warm: bool, title: str) -> np.ndarray:
     """Stream all parts, with natural pauses, into the encoder. Returns the first 3 minutes for analysis."""
     head, head_len, limit = [], 0, audio.SAMPLE_RATE * 180
+    # Nudge each part toward the episode's median loudness (+-3 dB) before the master gain.
+    lufs = [audio.loudness_lufs(audio.pcm_from_bytes(part.read_bytes())) for part, _ in segments]
+    gains = [10 ** (g / 20) for g in audio.match_part_gains(lufs)]
+    first_pass = True
 
     def stream():
-        nonlocal head_len
-        yield audio.silence(0.35)
+        nonlocal head_len, first_pass
+        yield audio.silence(LEAD_IN_SEC)
         for i, (part, gap) in enumerate(segments):
             pcm = audio.pcm_from_bytes(part.read_bytes())
-            if head_len < limit:
+            if first_pass and head_len < limit:
                 head.append(pcm)
                 head_len += pcm.size
-            yield pcm
-            yield audio.silence(gap if i < len(segments) - 1 else 0.6)
+            yield pcm.astype(np.float32) * (gains[i] / 32768.0)
+            yield audio.silence(gap if i < len(segments) - 1 else TAIL_SEC)
+        first_pass = False
 
-    audio.encode_mp3_stream(stream(), mp3_path, warm, "128k", title)
+    audio.encode_mp3_stream(stream, mp3_path, warm, "128k", title)
     return np.concatenate(head)[:limit] if head else np.zeros(0, dtype=np.int16)
 
 
@@ -305,7 +311,7 @@ async def _run_parallel(job: Job, provider: Provider, units: list, worker, start
 
 
 async def _narrator_segments(job, provider, text, opts, voice):
-    chunks = chunk_text(text, provider.max_chunk_chars)
+    chunks, breaks = chunk_text_with_breaks(text, provider.max_chunk_chars)
     job.stage = f"Recording voice: 0 of {len(chunks)} parts"
 
     async def speak(text: str, label: str, depth: int = 0) -> np.ndarray:
@@ -317,7 +323,7 @@ async def _narrator_segments(job, provider, text, opts, voice):
                 raise _never_truncated(label)
             a, b = _halves(sentences)       # shorter requests are cut off far less often
             return _join([await speak(" ".join(a), label, depth + 1),
-                          await speak(" ".join(b), label, depth + 1)], 0.35)
+                          await speak(" ".join(b), label, depth + 1)], BREAK_PAUSE_SEC["sentence"])
         return pcm
 
     async def worker(i, paras):
@@ -326,7 +332,7 @@ async def _narrator_segments(job, provider, text, opts, voice):
         return _save_part(job, i, await speak(prepare_for_speech("\n\n".join(paras)), f"Part {i + 1}"))
 
     pcms = await _run_parallel(job, provider, chunks, worker, 0.02, 0.94)
-    return [(p, CHUNK_PAUSE_SEC) for p in pcms]
+    return list(zip(pcms, break_pauses(breaks, TAIL_SEC)))
 
 
 async def _conversation_segments(job, provider, text, opts, v1, v2):
@@ -361,7 +367,7 @@ async def _conversation_segments(job, provider, text, opts, v1, v2):
                 if len(batch) < 2:
                     raise _never_truncated(label)
                 a, b = _halves(batch)
-                return _join([await speak(a, label), await speak(b, label)], TURN_GAP_SEC)
+                return _join([await speak(a, label), await speak(b, label)], turn_gap_sec(a[-1], b[0]))
             return pcm
 
         async def worker(i, batch: list[Turn]):
@@ -371,7 +377,8 @@ async def _conversation_segments(job, provider, text, opts, v1, v2):
             return _save_part(job, i, await speak(spoken, f"Part {i + 1}"))
 
         pcms = await _run_parallel(job, provider, batches, worker, 0.28, 0.68)
-        return [(p, TURN_GAP_SEC + 0.1) for p in pcms]
+        return [(p, turn_gap_sec(batches[i][-1], batches[i + 1][0]) if i + 1 < len(batches) else TAIL_SEC)
+                for i, p in enumerate(pcms)]
 
     async def worker(i, turn: Turn):
         if _part_path(job, i).exists():
@@ -384,4 +391,5 @@ async def _conversation_segments(job, provider, text, opts, v1, v2):
         return _save_part(job, i, pcm)
 
     pcms = await _run_parallel(job, provider, turns, worker, 0.28, 0.68)
-    return [(p, TURN_GAP_SEC) for p in pcms]
+    return [(p, turn_gap_sec(turns[i], turns[i + 1]) if i + 1 < len(turns) else TAIL_SEC)
+            for i, p in enumerate(pcms)]

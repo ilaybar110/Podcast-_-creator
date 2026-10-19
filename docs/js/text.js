@@ -25,6 +25,11 @@ export function cleanText(text) {
 }
 
 export function paragraphs(text) {
+  return paragraphBlocks(text).map((p) => p.text);
+}
+
+// Paragraphs, each flagged when it came from a line that looks like a heading.
+function paragraphBlocks(text) {
   // A single newline in pasted text is usually a hard wrap, unless the line looks like a heading.
   const out = [];
   for (const block of text.split(/\n\s*\n/).map((b) => b.trim()).filter(Boolean)) {
@@ -32,14 +37,14 @@ export function paragraphs(text) {
     for (const ln of block.split("\n").map((l) => l.trim()).filter(Boolean)) {
       const isHeading = ln.length < 40 && !/[.!?:,;…״׳"'”)\]]$/.test(ln);
       if (isHeading) {
-        if (cur) out.push(cur);
-        out.push(/[.!?]$/.test(ln) ? ln : ln + ".");
+        if (cur) out.push({ text: cur, heading: false });
+        out.push({ text: /[.!?]$/.test(ln) ? ln : ln + ".", heading: true });
         cur = "";
       } else {
         cur = (cur + " " + ln).trim();
       }
     }
-    if (cur) out.push(cur);
+    if (cur) out.push({ text: cur, heading: false });
   }
   return out;
 }
@@ -72,28 +77,64 @@ function splitLong(sentence, maxChars) {
 
 /** Group paragraphs into chunks of at most maxChars; each chunk is a list of paragraphs. */
 export function chunkText(text, maxChars = 1600) {
-  const chunks = [];
-  let cur = [], curLen = 0;
-  const flush = () => { if (cur.length) chunks.push(cur); cur = []; curLen = 0; };
-  for (const para of paragraphs(text)) {
+  return chunkTextWithBreaks(text, maxChars).chunks;
+}
+
+// Silence placed between two recorded chunks, by what separates them in the text.
+export const BREAK_PAUSE_SEC = { sentence: 0.35, paragraph: 0.7, section: 1.1 };
+
+/**
+ * The chunks of chunkText plus breaks[i]: what separates chunk i from chunk i+1 -
+ * "sentence" (inside a long paragraph), "paragraph", or "section" (chunk i+1 opens with a
+ * heading). breaks.length === chunks.length - 1.
+ */
+export function chunkTextWithBreaks(text, maxChars = 1600) {
+  const chunks = [], starts = [];     // starts[i]: what kind of boundary chunk i begins at
+  let cur = [], curLen = 0, curStart = "paragraph";
+  const flush = () => { if (cur.length) { chunks.push(cur); starts.push(curStart); } cur = []; curLen = 0; };
+  for (const { text: para, heading } of paragraphBlocks(text)) {
+    const kind = heading ? "section" : "paragraph";
     if (para.length > maxChars) {
       flush();
-      let piece = "";
+      let piece = "", pieceStart = kind;
       for (const sent of splitSentences(para)) {
         for (const s of splitLong(sent, maxChars)) {
-          if (piece && piece.length + s.length + 1 > maxChars) { chunks.push([piece]); piece = s; }
-          else piece = (piece + " " + s).trim();
+          if (piece && piece.length + s.length + 1 > maxChars) {
+            chunks.push([piece]); starts.push(pieceStart); piece = s; pieceStart = "sentence";
+          } else piece = (piece + " " + s).trim();
         }
       }
-      if (piece) { cur = [piece]; curLen = piece.length; }
+      if (piece) { cur = [piece]; curLen = piece.length; curStart = pieceStart; }
       continue;
     }
     if (curLen + para.length + 1 > maxChars) flush();
+    if (!cur.length) curStart = kind;
     cur.push(para);
     curLen += para.length + 1;
   }
   flush();
-  return chunks;
+  return { chunks, breaks: starts.slice(1) };
+}
+
+/** Pause (seconds) after each chunk: the break kind's pause, and `endSec` after the last one. */
+export function breakPauses(breaks, endSec = 0) {
+  return [...breaks.map((b) => BREAK_PAUSE_SEC[b] ?? BREAK_PAUSE_SEC.paragraph), endSec];
+}
+
+// Conversation: the gap between two recorded batches of turns - longer when the next turn
+// opens a new topic or is a long turn, so a batch cut doesn't sound like the hosts rush on.
+export const TURN_GAP_SEC = 0.25, TOPIC_GAP_SEC = 0.5;
+const LONG_TURN_CHARS = 280;
+const END = "(?=[\\s,.!?:;—–-]|$)";
+const TOPIC_START_RE = new RegExp(
+  `^(?:(?:so|now|okay|ok|alright|anyway|right),|(?:moving on|next up|speaking of|turning to|let's (?:talk|move|turn|look|switch)` +
+  `|another (?:thing|question|topic|point)|the next|finally|first of all|last but not least)${END}` +
+  `|(?:אז|טוב|עכשיו|ועכשיו|אוקיי),|(?:בוא נדבר|בואי נדבר|בוא נעבור|בואי נעבור|נעבור|ונעבור|הנושא הבא|דבר נוסף|ולסיום|לסיום|קודם כל)${END})`, "i");
+
+export function turnGapSec(prev, next) {
+  if (!prev || !next) return TURN_GAP_SEC;
+  const t = next.text.trim();
+  return t.length >= LONG_TURN_CHARS || TOPIC_START_RE.test(t) ? TOPIC_GAP_SEC : TURN_GAP_SEC;
 }
 
 export function estimateSeconds(text, language) {
