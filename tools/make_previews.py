@@ -5,7 +5,7 @@ already exist and stops after --max new ones, so a daily run leaves most of the 
 for making podcasts. Only the 8 recommended voices are recorded (Hebrew first, then English);
 other voices are still recorded live when tapped.
 
-    GEMINI_API_KEY=... python -m tools.make_previews --max 8
+    GEMINI_API_KEY=... python -m tools.make_previews --max 5
 """
 from __future__ import annotations
 
@@ -45,7 +45,7 @@ def write_manifest() -> None:
 
 async def main() -> int:
     ap = argparse.ArgumentParser()
-    ap.add_argument("--max", type=int, default=8, help="new samples per run (each uses one free request)")
+    ap.add_argument("--max", type=int, default=5, help="new samples per run (each uses one free request)")
     args = ap.parse_args()
     gem = GeminiProvider(free_only=True)
     if not gem.available():
@@ -62,7 +62,7 @@ async def main() -> int:
         try:
             pcm = await with_retries(lambda: gem.synthesize(text, v.id, opts), attempts=4)
         except QuotaExhausted as e:
-            print(f"Stopping for today: {e}")
+            print("Stopping for today: the daily free quota is used up. The next run continues.")
             break
         except ProviderError as e:
             print(f"  {lang}/{v.id}: failed - {e}")

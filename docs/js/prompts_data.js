@@ -41,7 +41,7 @@ export const DATA = {
  "FREE_DEFAULTS": {
   "gemini_tts": {
    "rpm": 3,
-   "rpd": 15,
+   "rpd": 10,
    "tpm": 10000
   },
   "gemini_text": {

@@ -68,7 +68,7 @@ How it works ([app/budget.py](app/budget.py)):
   never used. Each free request carries more text (3,000 characters, about 4 minutes of audio), so the
   daily quota goes further.
 - **The real limits are learned:** Google doesn't publish fixed free-tier numbers for every model; they're
-  set per project. The app starts from conservative defaults (15 voice requests a day, 3 per minute).
+  set per project. The app starts from conservative defaults (10 voice requests a day, the real limit Google reported for the newest voice model, and 3 per minute).
   When Google rejects a request for quota, its error states the exact limit, and the app saves it. You can
   also enter your limits from <https://aistudio.google.com/rate-limit> in **Settings**.
 - **ElevenLabs:** the app asks ElevenLabs for your exact remaining character quota.

@@ -45,7 +45,7 @@ jobs:
           pip install -q -r requirements.txt
       - name: Record missing samples
         if: steps.key.outputs.present == 'true'
-        run: python -m tools.make_previews --max 8
+        run: python -m tools.make_previews --max 5
       - name: Commit
         if: steps.key.outputs.present == 'true'
         run: |

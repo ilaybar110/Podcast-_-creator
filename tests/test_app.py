@@ -282,11 +282,11 @@ def test_free_verdict_counts_requests(ledger):
     chunk = budget.FREE_CHUNK_CHARS
     v = budget.gemini_verdict(chunk * 5, "narrator", "k", None, billing=False)
     b = v["buckets"]["gemini_tts"]
-    assert v["status"] == "free" and b["needed"] == 5 and b["left_today"] == 15
+    assert v["status"] == "free" and b["needed"] == 5 and b["left_today"] == 10
     assert "gemini_text" not in v["buckets"]
-    # 40 requests at 15/day -> spans days, still free
+    # 40 requests (+6 reserve) at 10/day -> spans days, still free
     v = budget.gemini_verdict(chunk * 40, "narrator", "k", None, billing=False)
-    assert v["status"] == "free_multi_day" and v["days"] == 4
+    assert v["status"] == "free_multi_day" and v["days"] == 5
     # usage already spent today is taken into account
     for _ in range(12):
         ledger.record(budget.key_id("k"), "gemini_tts", 10)

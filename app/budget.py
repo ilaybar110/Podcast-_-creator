@@ -28,7 +28,7 @@ PACIFIC = ZoneInfo("America/Los_Angeles")   # Gemini daily quotas reset at midni
 # Conservative free-tier defaults (env-overridable). Real values are learned from 429s.
 DEFAULT_LIMITS = {
     "gemini_tts": {"rpm": int(os.getenv("GEMINI_FREE_TTS_RPM", "3")),
-                   "rpd": int(os.getenv("GEMINI_FREE_TTS_RPD", "15")),
+                   "rpd": int(os.getenv("GEMINI_FREE_TTS_RPD", "10")),
                    "tpm": int(os.getenv("GEMINI_FREE_TTS_TPM", "10000"))},
     "gemini_text": {"rpm": int(os.getenv("GEMINI_FREE_TEXT_RPM", "10")),
                     "rpd": int(os.getenv("GEMINI_FREE_TEXT_RPD", "250")),
