@@ -4,6 +4,7 @@
 //   generation = 1 Google-Search deep dive + 1 script request per ~12 minutes of audio
 // Only the voice recording itself uses the small daily voice quota.
 import { CHARS_PER_SECOND } from "./text.js";
+import { DATA } from "./prompts_data.js";
 import { parseDialogue, conversationCraft, stripTags, NARRATION_CRAFT } from "./prompts.js";
 import { Cancelled, ProviderError, QuotaExhausted, withRetries } from "./gemini.js";
 
@@ -22,8 +23,8 @@ export const speechChars = (minutes, language) => Math.round(minutes * 60 * (CHA
 /** Requests a topic podcast needs, for the free-quota badge. */
 export function topicPlan(minutes, language, mode, chunkChars) {
   const chars = speechChars(minutes, language) * (mode === "conversation" ? 1.1 : 1);   // + speaker labels
-  // Parts end on paragraph boundaries, so they average a bit under the chunk size.
-  return { gemini_tts: Math.ceil(chars / (0.85 * chunkChars)), gemini_text: scriptParts(minutes, language), gemini_search: 1 };
+  // Even packing (text.js packEven) fills requests to ~95% of the chunk size on average.
+  return { gemini_tts: Math.ceil(chars / (DATA.FILL_FACTOR * chunkChars)), gemini_text: scriptParts(minutes, language), gemini_search: 1 };
 }
 
 // ------------------------------------------------------------------ Wikipedia (free)

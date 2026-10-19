@@ -177,10 +177,13 @@ export function startEncoder(kbps = 96) {
 let dbP = null;
 function db() {
   dbP ||= new Promise((resolve, reject) => {
-    const req = indexedDB.open("podcast-creator", 1);
+    const req = indexedDB.open("podcast-creator", 2);
     req.onupgradeneeded = () => {
-      req.result.createObjectStore("jobs", { keyPath: "id" });
-      req.result.createObjectStore("parts");
+      const have = req.result.objectStoreNames;
+      if (!have.contains("jobs")) req.result.createObjectStore("jobs", { keyPath: "id" });
+      if (!have.contains("parts")) req.result.createObjectStore("parts");
+      if (!have.contains("cache")) req.result.createObjectStore("cache");         // recordings by content
+      if (!have.contains("cacheIdx")) req.result.createObjectStore("cacheIdx");   // {at, bytes} per recording
     };
     req.onsuccess = () => {
       const d = req.result;
@@ -203,7 +206,7 @@ async function tx(store, mode, fn) {
     t.onabort = () => reject(t.error || new Error("Storage write was aborted (the device may be out of space)."));
   });
 }
-const memory = { jobs: new Map(), parts: new Map() };
+const memory = { jobs: new Map(), parts: new Map(), cache: new Map(), cacheIdx: new Map() };
 const copy = (v) => (typeof Blob !== "undefined" && v instanceof Blob) ? v : structuredClone(v);
 const partKeys = (jobId) => IDBKeyRange.bound(`${jobId}/`, `${jobId}/￿`);
 let persistent = true;
@@ -222,6 +225,41 @@ function unpackFloat(v) {
   for (let i = 0; i < out.length; i++) out[i] = v.data[i] * k;
   return out;
 }
+
+// ------------------------------------------------------------------ recordings cache
+// Recorded parts are also kept by *content*: the key hashes everything that shapes the audio (model,
+// voices, style, pace, language, the exact spoken text), so the same passage is never recorded -
+// and never uses voice quota - twice, even in another job. Bounded: newest ~150 MB / 200, 14 days.
+export const CACHE_MAX_BYTES = 150 * 1024 * 1024, CACHE_MAX_ENTRIES = 200, CACHE_TTL_MS = 14 * 24 * 3600 * 1000;
+export const CACHE_VERSION = 1;      // bump when a change to the prompts or the take processing makes old recordings stale
+
+export async function contentKey(parts) {
+  const s = JSON.stringify([CACHE_VERSION, ...parts]);
+  try {
+    const buf = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(s));
+    return [...new Uint8Array(buf)].map((b) => b.toString(16).padStart(2, "0")).join("");
+  } catch {                          // no crypto.subtle (insecure context): two 32-bit string hashes
+    let h1 = 0x811c9dc5, h2 = 0x9747b28c;
+    for (let i = 0; i < s.length; i++) {
+      const c = s.charCodeAt(i);
+      h1 = Math.imul(h1 ^ c, 0x01000193); h2 = Math.imul(h2 ^ c, 0x85ebca6b) ^ (h2 >>> 13);
+    }
+    return "h" + (h1 >>> 0).toString(16).padStart(8, "0") + (h2 >>> 0).toString(16).padStart(8, "0") + s.length.toString(16);
+  }
+}
+
+/** Which cached recordings to drop: the expired ones, then the oldest until the size and count limits hold. */
+export function cacheEvictions(entries, now = Date.now(), { maxBytes = CACHE_MAX_BYTES, maxEntries = CACHE_MAX_ENTRIES, ttl = CACHE_TTL_MS } = {}) {
+  const drop = entries.filter((e) => now - e.at > ttl).map((e) => e.key);
+  const gone = new Set(drop);
+  const live = entries.filter((e) => !gone.has(e.key)).sort((a, b) => b.at - a.at);     // newest first
+  let bytes = 0, kept = 0;
+  for (const e of live) {
+    if (kept >= maxEntries || bytes + e.bytes > maxBytes) drop.push(e.key);
+    else { kept++; bytes += e.bytes; }
+  }
+  return drop;
+}
 export const store = {
   get persistent() { return persistent; },
   /** Keep everything in memory from now on (IndexedDB unavailable). */
@@ -234,6 +272,47 @@ export const store = {
     : memory.parts.has(`${jobId}/${i}`),
   putMastered: (jobId, i, float) => store.putPart(jobId, `m${i}`, packFloat(float)),
   getMastered: async (jobId, i) => unpackFloat(await store.getPart(jobId, `m${i}`)),
+  /** The recording cached under `key`, or undefined (also when it has expired). */
+  async getCache(key) {
+    try {
+      const idx = persistent ? await tx("cacheIdx", "readonly", (s) => s.get(key)) : memory.cacheIdx.get(key);
+      if (!idx || Date.now() - idx.at > CACHE_TTL_MS) return undefined;
+      const pcm = persistent ? await tx("cache", "readonly", (s) => s.get(key)) : memory.cache.get(key);
+      if (!pcm) return undefined;
+      const fresh = { ...idx, at: Date.now() };       // used just now: keep it among the newest
+      if (persistent) await tx("cacheIdx", "readwrite", (s) => s.put(fresh, key)); else memory.cacheIdx.set(key, fresh);
+      return persistent ? pcm : pcm.slice();
+    } catch { return undefined; }                     // a cache must never break a podcast
+  },
+  async hasCache(key) {
+    try {
+      const idx = persistent ? await tx("cacheIdx", "readonly", (s) => s.get(key)) : memory.cacheIdx.get(key);
+      return !!idx && Date.now() - idx.at <= CACHE_TTL_MS;
+    } catch { return false; }
+  },
+  async putCache(key, pcm) {
+    try {
+      const idx = { at: Date.now(), bytes: pcm.byteLength };
+      if (idx.bytes > CACHE_MAX_BYTES) return;
+      if (persistent) {
+        await tx("cache", "readwrite", (s) => s.put(pcm, key));
+        await tx("cacheIdx", "readwrite", (s) => s.put(idx, key));
+      } else { memory.cache.set(key, pcm.slice()); memory.cacheIdx.set(key, idx); }
+      const keys = persistent ? await tx("cacheIdx", "readonly", (s) => s.getAllKeys()) : [...memory.cacheIdx.keys()];
+      const vals = persistent ? await tx("cacheIdx", "readonly", (s) => s.getAll()) : [...memory.cacheIdx.values()];
+      const drop = cacheEvictions(keys.map((k, i) => ({ key: k, ...vals[i] })));
+      if (!drop.length) return;
+      if (persistent) {
+        await tx("cache", "readwrite", (s) => { for (const k of drop) s.delete(k); });
+        await tx("cacheIdx", "readwrite", (s) => { for (const k of drop) s.delete(k); });
+      } else for (const k of drop) { memory.cache.delete(k); memory.cacheIdx.delete(k); }
+    } catch { /* full or unavailable storage: just no cache */ }
+  },
+  async clearCache() {
+    if (!persistent) { memory.cache.clear(); memory.cacheIdx.clear(); return; }
+    await tx("cache", "readwrite", (s) => s.clear());
+    await tx("cacheIdx", "readwrite", (s) => s.clear());
+  },
   saveJob: (job) => persistent ? tx("jobs", "readwrite", (s) => s.put(job))
     : (memory.jobs.set(job.id, copy(job)), Promise.resolve()),
   loadJob: (id) => persistent ? tx("jobs", "readonly", (s) => s.get(id))
@@ -253,7 +332,8 @@ export const store = {
   },
   /**
    * Free space on start: drop every job's parts except those of `resumable` (a job that can still be
-   * continued) and the MP3 of `finished`; drop job records that keep nothing. Previews are kept.
+   * continued) and the MP3 of `finished`; drop job records that keep nothing. Previews and the
+   * recordings cache (its own stores, trimmed by age and size) are kept.
    */
   async cleanup({ resumable = null, finished = null } = {}) {
     const keepJobs = new Set([resumable, finished].filter(Boolean));

@@ -22,6 +22,7 @@ from pathlib import Path
 from zoneinfo import ZoneInfo
 
 from .providers.base import ProviderError
+from .text_utils import chunk_text
 
 PACIFIC = ZoneInfo("America/Los_Angeles")   # Gemini daily quotas reset at midnight Pacific
 
@@ -31,7 +32,7 @@ DEFAULT_LIMITS = {
                    "rpd": int(os.getenv("GEMINI_FREE_TTS_RPD", "10")),
                    "tpm": int(os.getenv("GEMINI_FREE_TTS_TPM", "10000"))},
     "gemini_text": {"rpm": int(os.getenv("GEMINI_FREE_TEXT_RPM", "10")),
-                    "rpd": int(os.getenv("GEMINI_FREE_TEXT_RPD", "250")),
+                    "rpd": int(os.getenv("GEMINI_FREE_TEXT_RPD", "50")),
                     "tpm": int(os.getenv("GEMINI_FREE_TEXT_TPM", "250000"))},
     # "Grounding with Google Search" (the browser's topic research). Free only on Gemini 2.5 Flash
     # models; Google reports a few hundred free searches a day, so this default stays well inside.
@@ -40,10 +41,12 @@ DEFAULT_LIMITS = {
                       "tpm": int(os.getenv("GEMINI_FREE_SEARCH_TPM", "250000"))},
 }
 # In free mode each TTS request carries more text, so the daily request quota goes further.
-FREE_CHUNK_CHARS = int(os.getenv("GEMINI_FREE_CHUNK_CHARS", "3000"))
+FREE_CHUNK_CHARS = int(os.getenv("GEMINI_FREE_CHUNK_CHARS", "4500"))
 SCRIPT_PART_CHARS = 6000          # must match script_writer.SOURCE_PART_CHARS
 DIALOGUE_EXPANSION = 1.25         # a dialogue is a bit longer than its source
-RESERVE = 0.15                    # spare requests for re-recording bad takes
+RESERVE = 0.15                    # spare requests for re-recording bad takes (default; the web app learns its own rate)
+RESERVE_MIN, RESERVE_MAX = 0.05, 0.30
+FILL_FACTOR = 0.95                # even packing (text_utils.pack_even) fills requests to ~95% of the chunk size on average
 
 
 class QuotaExhausted(ProviderError):
@@ -196,25 +199,34 @@ class Gate:
 
 
 # ------------------------------------------------------------------ planning
-def plan_requests(chars: int, mode: str, chunk_chars: int, already_done: int = 0) -> dict:
-    """How many API calls a podcast needs, by quota bucket."""
+def plan_requests(chars: int, mode: str, chunk_chars: int, already_done: int = 0,
+                  tts_parts: int | None = None, script_parts: int | None = None,
+                  reserve: float = RESERVE) -> dict:
+    """How many API calls a podcast needs, by quota bucket. tts_parts / script_parts are the real
+    counts from running the chunker on the text; without them they are estimated from the length."""
     if mode == "conversation":
-        script = math.ceil(chars / SCRIPT_PART_CHARS)
-        tts = math.ceil(chars * DIALOGUE_EXPANSION / chunk_chars)
+        script = script_parts if script_parts is not None else math.ceil(chars / SCRIPT_PART_CHARS)
+        tts = tts_parts if tts_parts is not None else math.ceil(chars * DIALOGUE_EXPANSION / (FILL_FACTOR * chunk_chars))
     else:
         script = 0
-        tts = math.ceil(chars / chunk_chars)
+        tts = tts_parts if tts_parts is not None else math.ceil(chars / (FILL_FACTOR * chunk_chars))
     tts = max(0, tts - already_done)
     return {"gemini_tts": tts, "gemini_text": script,
-            "reserve": {"gemini_tts": math.ceil(tts * RESERVE) if tts else 0,
+            "reserve": {"gemini_tts": math.ceil(tts * reserve) if tts else 0,
                         "gemini_text": 1 if script else 0}}
 
 
 def gemini_verdict(chars: int, mode: str, api_key: str | None, overrides: dict | None,
-                   billing: bool, ledger: Ledger | None = None) -> dict:
+                   billing: bool, ledger: Ledger | None = None, text: str | None = None,
+                   already_done: int = 0) -> dict:
+    """With `text`, the real chunker counts the voice requests (narrator) and script parts (conversation)."""
     ledger = ledger or LEDGER
     kid = key_id(api_key)
-    p = plan_requests(chars, mode, FREE_CHUNK_CHARS)
+    tts_parts = script_parts = None
+    if text:
+        script_parts = len(chunk_text(text, SCRIPT_PART_CHARS)) if mode == "conversation" else None
+        tts_parts = None if mode == "conversation" else len(chunk_text(text, FREE_CHUNK_CHARS))
+    p = plan_requests(chars, mode, FREE_CHUNK_CHARS, already_done, tts_parts, script_parts)
     buckets = {}
     days = 1
     for b in ("gemini_tts", "gemini_text"):
@@ -241,7 +253,7 @@ def gemini_verdict(chars: int, mode: str, api_key: str | None, overrides: dict |
 
 
 def free_check(provider, chars: int, mode: str, keys: dict, billing: bool,
-               overrides: dict | None = None) -> dict:
+               overrides: dict | None = None, text: str | None = None) -> dict:
     """Will this podcast cost money? One verdict per engine:
 
     free            fits in what is left of today's free quota
@@ -251,11 +263,11 @@ def free_check(provider, chars: int, mode: str, keys: dict, billing: bool,
     paid            billing is enabled on the key: every request is billed
     unknown         the quota couldn't be checked
     """
-    out = _engine_check(provider, chars, mode, keys, billing, overrides)
+    out = _engine_check(provider, chars, mode, keys, billing, overrides, text)
     if mode == "conversation" and provider.name != "gemini":
         # The two-host script is always written by Gemini, so its quota matters too.
         script = gemini_verdict(chars, mode, keys.get("gemini") or os.getenv("GEMINI_API_KEY"),
-                                overrides, billing)
+                                overrides, billing, text=text)
         script["buckets"].pop("gemini_tts", None)
         script["days"] = 1 + max(0, max((math.ceil((b["needed"] + b["reserve"] - b["left_today"])
                                                   / max(1, b["per_day"]))
@@ -270,12 +282,12 @@ def free_check(provider, chars: int, mode: str, keys: dict, billing: bool,
 RANK = {"free": 0, "plan_credits": 1, "free_multi_day": 2, "unknown": 3, "not_free": 4, "paid": 5}
 
 
-def _engine_check(provider, chars, mode, keys, billing, overrides) -> dict:
+def _engine_check(provider, chars, mode, keys, billing, overrides, text=None) -> dict:
     name = provider.name
     if name == "edge":
         return {"engine": name, "status": "free", "unlimited": True}
     if name == "gemini":
-        return gemini_verdict(chars, mode, provider.api_key, overrides, billing)
+        return gemini_verdict(chars, mode, provider.api_key, overrides, billing, text=text)
     if name == "elevenlabs":
         needed = int(chars * (DIALOGUE_EXPANSION if mode == "conversation" else 1))
         sub = provider.subscription()

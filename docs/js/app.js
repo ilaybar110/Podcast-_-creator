@@ -3,7 +3,7 @@ import { cleanText, detectLanguage, estimateSeconds, formatDuration } from "./te
 import { STYLES } from "./prompts.js";
 import { DATA } from "./prompts_data.js";
 import { Gemini, QuotaExhausted, VOICES, freeVerdict, withRetries } from "./gemini.js";
-import { Cancelled, hostNames, runJob } from "./job.js";
+import { Cancelled, hostNames, planParts, runJob } from "./job.js";
 import { research, topicPlan } from "./research.js";
 import * as A from "./audio.js";
 
@@ -303,8 +303,31 @@ function onTextChange() {
     $("statEst").textContent = "~" + formatDuration(secs);
     if (!key()) return renderFree(null);
     const o = freeOpts();
-    renderFree(await freeVerdict({ chars: text.length, mode: state.mode, apiKey: key(), overrides: o.limits, billing: o.billing }));
+    renderFree(await realEstimate(raw, text, o));
   }, 250);
+}
+
+/**
+ * The free-tier verdict from the real chunker: the actual number of voice requests for this text (or,
+ * for a conversation, its written script), minus the parts a paused job with this very text has
+ * already recorded and the ones the recordings cache holds.
+ */
+async function realEstimate(raw, text, o) {
+  const chunkChars = o.freeOnly ? DATA.FREE_CHUNK_CHARS : 1500;
+  const prior = state.job && resumableJob(state.job) && state.job.request.text === raw && state.job.request.mode === state.mode
+    ? state.job : null;
+  const job = prior ? { ...prior, chunkChars: prior.chunkChars || chunkChars }
+    : { id: null, chunkChars, request: { text, mode: state.mode, language: state.lang, voice: state.voice, voice2: state.voice2,
+      style: state.style, pace: state.pace } };
+  let parts = null;
+  try {
+    let model = "";
+    try { model = await gemini().ttsModel(); } catch { /* no model list yet: the cache can't be checked */ }
+    parts = await planParts(job, { model });
+  } catch { /* fall back to the length-based estimate */ }
+  return freeVerdict({ chars: text.length, mode: state.mode, apiKey: key(), overrides: o.limits, billing: o.billing,
+    chunkChars: job.chunkChars, ...(parts && { ttsParts: parts.ttsParts, textParts: parts.textParts,
+      alreadyDone: parts.alreadyDone, cached: parts.cached }) });
 }
 
 // ---------------------------------------------------------------- podcast from a topic

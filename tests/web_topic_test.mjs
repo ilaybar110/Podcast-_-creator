@@ -48,7 +48,8 @@ assert.equal(r2.searched, false); assert.equal(g.calls.text, 1); assert.equal(r2
 assert.equal(R.scriptParts(20, "en"), 2);
 const plan = R.topicPlan(10, "he", "narrator", 3000);
 assert.equal(plan.gemini_tts, 3);
-assert.equal(R.topicPlan(8, "he", "narrator", 3000).gemini_tts, 3); assert.equal(plan.gemini_text, 1); assert.equal(plan.gemini_search, 1);
+assert.equal(R.topicPlan(8, "he", "narrator", 3000).gemini_tts, 3);
+assert.equal(R.topicPlan(30, "he", "narrator", 4500).gemini_tts, 6, "22500 chars / (0.95 * 4500)"); assert.equal(plan.gemini_text, 1); assert.equal(plan.gemini_search, 1);
 for (const mode of ["narrator", "conversation"]) {
   g = fakeGemini();
   const saved = [];

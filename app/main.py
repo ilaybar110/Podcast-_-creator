@@ -98,7 +98,7 @@ def _free_check(body, text: str, keys: dict) -> dict:
         provider = get_provider(body.provider, keys, body.free_only, body.clean_limits())
     except ProviderError as e:
         return {"status": "unknown", "reason": str(e)}
-    return budget.free_check(provider, len(text), body.mode, keys, body.billing, body.clean_limits())
+    return budget.free_check(provider, len(text), body.mode, keys, body.billing, body.clean_limits(), text=text)
 
 
 @app.post("/api/estimate")

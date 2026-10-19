@@ -138,6 +138,19 @@ export class Ledger {
     if (e.used[bucket] > 0) { e.used[bucket]--; this._save(d); }
     this.window(kid, bucket).pop();
   }
+  /** Observed retake rate: extra voice requests per first take (kept in this browser, newest ~100 parts). */
+  _retakes() { try { return JSON.parse(this.storage.getItem("podcastRetakes") || "{}"); } catch { return {}; } }
+  noteTakes(first, extra) {
+    let s = this._retakes(), a = (s.first || 0) + first, b = (s.extra || 0) + extra;
+    if (a > 100) { a /= 2; b /= 2; }
+    try { this.storage.setItem("podcastRetakes", JSON.stringify({ first: a, extra: b })); } catch { /* full/private */ }
+  }
+  /** Spare requests to plan per voice request: the observed rate (5-30%), 15% until enough was seen. */
+  retakeRate() {
+    const { first = 0, extra = 0 } = this._retakes();
+    if (!(first >= 6)) return DATA.RESERVE;
+    return Math.min(DATA.RESERVE_MAX, Math.max(DATA.RESERVE_MIN, extra / first));
+  }
   markExhausted(kid, bucket, limit) {
     const d = this._load(); const e = this._entry(d, kid);
     if (limit) (e.learned[bucket] ||= {}).rpd = limit;
@@ -209,21 +222,28 @@ export class Gate {
   }
 }
 
-/** `plan` (optional) gives the request counts directly, e.g. for a podcast written from a topic. */
-export async function freeVerdict({ chars, mode, apiKey, overrides, billing, alreadyDone = 0, plan = null, ledger = LEDGER }) {
+/**
+ * `ttsParts` / `textParts`: the real request counts from running the chunker (job.js planParts);
+ * without them they are estimated from `chars`. `alreadyDone` (parts recorded by a resumed job) and
+ * `cached` (parts found in the recordings cache) need no request. `plan` gives the counts directly,
+ * e.g. for a podcast written from a topic.
+ */
+export async function freeVerdict({ chars, mode, apiKey, overrides, billing, alreadyDone = 0, cached = 0, ttsParts = null,
+  textParts = null, chunkChars = DATA.FREE_CHUNK_CHARS, plan = null, ledger = LEDGER }) {
   const kid = await keyId(apiKey);
-  const chunk = DATA.FREE_CHUNK_CHARS;
+  const conv = mode === "conversation";
   const need = plan ? { ...plan } : {
-    gemini_tts: Math.max(0, Math.ceil(chars * (mode === "conversation" ? 1.25 : 1) / chunk) - alreadyDone),
-    gemini_text: mode === "conversation" ? Math.ceil(chars / 6000) : 0,
+    gemini_tts: Math.max(0, (ttsParts ?? Math.ceil(chars * (conv ? 1.25 : 1) / (DATA.FILL_FACTOR * chunkChars))) - alreadyDone - cached),
+    gemini_text: textParts ?? (conv ? Math.ceil(chars / 6000) : 0),
   };
+  const rate = ledger.retakeRate?.() ?? DATA.RESERVE;
   const buckets = {};
   let days = 1;
   for (const b of ["gemini_tts", "gemini_text", "gemini_search"]) {
     if (!need[b]) continue;
     const lim = ledger.limits(kid, b, overrides?.[b]);
     const left = Math.max(0, lim.rpd - ledger.used(kid, b));
-    const reserve = b === "gemini_tts" ? Math.ceil(need[b] * 0.15) : 1;
+    const reserve = b === "gemini_tts" ? Math.ceil(need[b] * rate) : 1;       // text/search: 1 spare (covers a JSON repair)
     const total = need[b] + reserve;
     // A missing search only skips the optional deep dive, so it never delays the podcast.
     if (total > left && b !== "gemini_search") days = Math.max(days, 1 + Math.ceil((total - left) / Math.max(1, lim.rpd)));

@@ -117,6 +117,26 @@ const cat = (...xs) => { const o = new Float32Array(xs.reduce((s, x) => s + x.le
   assert.ok(Math.abs(both.integratedDb() - m.integratedDb() - 6) < 1e-6);
 }
 
+// ---------------------------------------------------------------- even packing
+{
+  const doc = (n) => Array.from({ length: n }, (_, i) => `Paragraph ${i}. ` + "A fairly long test sentence, with commas. ".repeat(i * 7 % 11 + 1)).join("\n\n");
+  for (const max of [700, 1500, 4500]) {
+    for (const n of [3, 12, 45, 90]) {
+      const text = T.cleanText(doc(n));
+      const { chunks, breaks } = T.chunkTextWithBreaks(text, max);
+      const sizes = chunks.map((c) => c.join("\n\n").length), avg = sizes.reduce((a, b) => a + b, 0) / sizes.length;
+      assert.equal(breaks.length, chunks.length - 1);
+      assert.ok(Math.max(...sizes) <= max * 1.1, `${max}/${n}: ${sizes}`);
+      if (sizes.length > 1) assert.ok(Math.min(...sizes) >= 0.75 * avg, `tiny chunk ${max}/${n}: ${sizes}`);
+      assert.equal(chunks.flat().join(" ").split(/\s+/).length, text.split(/\s+/).length, "nothing lost");
+    }
+  }
+  assert.equal(T.chunkText("Word. ".repeat(780), 4500).length, 1, "10% slack saves a request");
+  assert.deepEqual(T.chunkText("", 100), []);
+  assert.deepEqual(T.packEven([10, 10, 10, 10], [0, 0, 0], 20), [[0, 2], [2, 4]]);
+  assert.deepEqual(T.packEven([10, 10, 10, 10, 10], [0, 0, 9, 0], 30), [[0, 2], [2, 5]], "an expensive cut after item 3 moves the cut");
+}
+
 // ---------------------------------------------------------------- pause kinds
 {
   const text = "Intro\n\n" + "First paragraph sentence here. ".repeat(10) + "\n\n" +

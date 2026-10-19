@@ -75,7 +75,7 @@ function splitLong(sentence, maxChars) {
   return parts;
 }
 
-/** Group paragraphs into chunks of at most maxChars; each chunk is a list of paragraphs. */
+/** Group paragraphs into chunks of about maxChars; each chunk is a list of paragraphs. */
 export function chunkText(text, maxChars = 1600) {
   return chunkTextWithBreaks(text, maxChars).chunks;
 }
@@ -83,36 +83,82 @@ export function chunkText(text, maxChars = 1600) {
 // Silence placed between two recorded chunks, by what separates them in the text.
 export const BREAK_PAUSE_SEC = { sentence: 0.35, paragraph: 0.7, section: 1.1 };
 
+// A request may overrun maxChars by this much, so a tiny leftover never costs a whole request.
+export const OVERRUN = 1.1;
+
 /**
- * The chunks of chunkText plus breaks[i]: what separates chunk i from chunk i+1 -
- * "sentence" (inside a long paragraph), "paragraph", or "section" (chunk i+1 opens with a
- * heading). breaks.length === chunks.length - 1.
+ * Even packing (twin of app/text_utils.py pack_even). sizes[i]: size of item i; pens[i]: how bad
+ * it is to end a chunk after item i, in units of "10% off the target size". Picks the fewest chunks
+ * that fit maxChars * OVERRUN, then the cut points where every chunk is closest to total / n and
+ * the cuts are least bad. Returns [start, end) pairs. A single item may exceed the limit on its own.
  */
-export function chunkTextWithBreaks(text, maxChars = 1600) {
-  const chunks = [], starts = [];     // starts[i]: what kind of boundary chunk i begins at
-  let cur = [], curLen = 0, curStart = "paragraph";
-  const flush = () => { if (cur.length) { chunks.push(cur); starts.push(curStart); } cur = []; curLen = 0; };
-  for (const { text: para, heading } of paragraphBlocks(text)) {
-    const kind = heading ? "section" : "paragraph";
-    if (para.length > maxChars) {
-      flush();
-      let piece = "", pieceStart = kind;
-      for (const sent of splitSentences(para)) {
-        for (const s of splitLong(sent, maxChars)) {
-          if (piece && piece.length + s.length + 1 > maxChars) {
-            chunks.push([piece]); starts.push(pieceStart); piece = s; pieceStart = "sentence";
-          } else piece = (piece + " " + s).trim();
+export function packEven(sizes, pens, maxChars) {
+  const m = sizes.length;
+  if (!m) return [];
+  const limit = Math.floor(maxChars * OVERRUN);
+  const pre = [0];
+  for (const s of sizes) pre.push(pre[pre.length - 1] + s);
+  const T = pre[m];
+  const attempt = (n, slack) => {
+    const par = [];
+    let prev = new Array(m + 1).fill(Infinity);
+    prev[0] = 0;
+    for (let k = 1; k <= n; k++) {
+      const cur = new Array(m + 1).fill(Infinity), from = new Array(m + 1).fill(-1);
+      for (let j = k; j <= m - (n - k); j++) {
+        if (Math.abs(pre[j] * n - k * T) > slack * n) continue;
+        for (let i = j - 1; i >= k - 1; i--) {
+          const size = pre[j] - pre[i];
+          if (size > limit && j - i > 1) break;
+          if (prev[i] === Infinity) continue;
+          const d = n * size - T;
+          const cost = prev[i] + 100 * d * d + (j < m ? pens[j - 1] * T * T : 0);
+          if (cost < cur[j]) { cur[j] = cost; from[j] = i; }
         }
       }
-      if (piece) { cur = [piece]; curLen = piece.length; curStart = pieceStart; }
-      continue;
+      par.push(from);
+      prev = cur;
     }
-    if (curLen + para.length + 1 > maxChars) flush();
-    if (!cur.length) curStart = kind;
-    cur.push(para);
-    curLen += para.length + 1;
+    if (prev[m] === Infinity) return null;
+    const out = [];
+    for (let k = n, j = m; k > 0; k--) { const i = par[k - 1][j]; out.unshift([i, j]); j = i; }
+    return out;
+  };
+  for (let n = Math.max(1, Math.ceil(T / limit)); n < m; n++) {
+    const r = attempt(n, 1.5 * limit) || attempt(n, Infinity);
+    if (r) return r;
   }
-  flush();
+  return sizes.map((_, i) => [i, i + 1]);
+}
+
+/**
+ * The chunks of chunkText plus breaks[i]: what separates chunk i from chunk i+1 -
+ * "sentence" (inside a paragraph), "paragraph", or "section" (chunk i+1 opens with a
+ * heading). breaks.length === chunks.length - 1.
+ *
+ * Chunks are packed evenly (see packEven): n = fewest requests that fit, each about total / n,
+ * cut at paragraph boundaries where possible, never right after a heading.
+ */
+export function chunkTextWithBreaks(text, maxChars = 1600) {
+  const atoms = [];      // sentences, remembering the paragraph they came from
+  paragraphBlocks(text).forEach(({ text: para, heading }, pi) => {
+    const sents = splitSentences(para).flatMap((s) => splitLong(s, maxChars));
+    sents.forEach((s, k) => atoms.push({ text: s, pi, para, heading, first: k === 0, count: sents.length }));
+  });
+  const sizes = atoms.map((a) => a.text.length + (a.first ? 2 : 1));   // + the separator that joins it
+  const pens = atoms.slice(0, -1).map((a, i) => atoms[i + 1].pi === a.pi ? 4 : a.heading ? 30 : 0);
+  const chunks = [], starts = [];
+  for (const [i, j] of packEven(sizes, pens, maxChars)) {
+    const chunk = [];
+    for (let k = i; k < j;) {
+      let e = k;
+      while (e < j && atoms[e].pi === atoms[k].pi) e++;
+      chunk.push(e - k === atoms[k].count ? atoms[k].para : atoms.slice(k, e).map((a) => a.text).join(" "));
+      k = e;
+    }
+    chunks.push(chunk);
+    starts.push(!atoms[i].first ? "sentence" : atoms[i].heading ? "section" : "paragraph");
+  }
   return { chunks, breaks: starts.slice(1) };
 }
 
