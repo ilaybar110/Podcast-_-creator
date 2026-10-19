@@ -436,3 +436,14 @@ def test_web_topic_research_and_script():
     test = Path(__file__).resolve().parent / "web_topic_test.mjs"
     out = subprocess.run(["node", str(test)], capture_output=True, text=True)
     assert out.returncode == 0, out.stderr
+
+
+def test_web_job_retakes_quota_and_resume():
+    import shutil
+    import subprocess
+    from pathlib import Path
+    if not shutil.which("node"):
+        pytest.skip("node not installed")
+    test = Path(__file__).resolve().parent / "web_job_test.mjs"
+    out = subprocess.run(["node", str(test)], capture_output=True, text=True)
+    assert out.returncode == 0, out.stderr

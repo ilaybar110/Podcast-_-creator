@@ -1,11 +1,16 @@
 // Podcast generation in the browser (port of app/jobs.py + app/script_writer.py).
 import { cleanText, chunkText, splitSentences } from "./text.js";
 import { podcastScriptPrompt, parseDialogue } from "./prompts.js";
-import { Cancelled, ProviderError, QuotaExhausted, VOICES, withRetries } from "./gemini.js";
+import { Cancelled, ProviderError, QuotaExhausted, VOICES, nextReset, withRetries } from "./gemini.js";
 import * as A from "./audio.js";
 import { writeTopicScript } from "./research.js";
 
-const MAX_TAKES = 3;
+// How many voice requests one passage may use. Free-only mode is frugal: a "too long" or "dead air"
+// take is kept (with a warning), and a cut-off take is split into shorter requests at once.
+const RETAKES = {
+  free: { fullTakes: 2, splitTakes: 1, acceptSoft: true, splitEarly: true, maxDepth: 2, perPart: 6, perJob: 0.15 },
+  paid: { fullTakes: 3, splitTakes: 2, acceptSoft: false, splitEarly: false, maxDepth: 3, perPart: 15, perJob: 1 },
+};
 const CHUNK_PAUSE = 0.75, TURN_GAP = 0.3;
 const TARGET_LUFS = -16;
 
@@ -34,7 +39,7 @@ export function batchTurns(turns, maxChars) {
 const halves = (a) => [a.slice(0, a.length >> 1), a.slice(a.length >> 1)];
 const truncated = (p) => p.some((x) => x.startsWith("too short"));
 const neverTruncated = (label) => new ProviderError(`${label}: the voice engine keeps cutting this passage short, ` +
-  "so it was not recorded completely. Try again, or try another voice.");
+  "so it was not recorded completely. Continue to try again, or try another voice.");
 
 function joinPcm(pcms, gap) {
   const out = [];
@@ -77,19 +82,61 @@ export async function runJob(job, gemini, ui) {
   if (req.topic && !req.text) await writeTopicScript(job, gemini, ui, opts, (j) => A.store.saveJob(j));
   const text = cleanText(req.text);
   if (!text) throw new ProviderError("The text is empty after cleanup.");
-  job.chunkChars ||= gemini.maxChunkChars;    // fixed on first run so resumed jobs line up
+  if (!job.chunkChars) {                     // fixed on first run (and saved) so resumed jobs line up
+    job.chunkChars = gemini.maxChunkChars;
+    await A.store.saveJob(job);
+  }
 
-  async function bestTake(make, txt, label) {
-    let best = null, bestProblems = null;
-    for (let take = 0; take < MAX_TAKES; take++) {
+  // ------------------------------------------------------------- retake budget
+  const policy = gemini.freeOnly ? RETAKES.free : RETAKES.paid;
+  let extraUsed = 0, started = 0;
+  // Free-only: today's voice requests left, as the free-tier guard counts them (Infinity if unknown).
+  async function ttsLeft() {
+    try {
+      const g = gemini.gate, kid = await g.kidP;
+      const left = g.ledger.limits(kid, "gemini_tts", g.overrides?.gemini_tts).rpd - g.ledger.used(kid, "gemini_tts");
+      return Number.isFinite(left) ? left : Infinity;
+    } catch { return Infinity; }
+  }
+  /** May this part make one more request beyond its first? Retakes never eat into first takes. */
+  async function mayRetake(part) {
+    if (part.requests >= policy.perPart) return false;
+    if (extraUsed >= Math.max(3, Math.ceil(units.length * policy.perJob))) return false;
+    if (gemini.freeOnly && (await ttsLeft()) - (units.length - started) <= 0) {
+      throw new QuotaExhausted("Today's free voice requests are needed for the rest of the podcast; " +
+        "the retake will be made after the reset.", nextReset());
+    }
+    return true;
+  }
+
+  /** Returns [pcm, problems]; problems is non-empty only for a take we decided to keep anyway. */
+  async function bestTake(make, txt, label, part, { depth = 0, canSplit = false } = {}) {
+    const maxTakes = depth ? policy.splitTakes : policy.fullTakes;
+    let best = null, bestProblems = null, takes = 0;
+    for (let take = 0; take < maxTakes; take++) {
       if (ui.cancelled()) throw new Cancelled();
-      const { pcm, rate } = await withRetries(make);
-      const clean = A.trimSilence(A.resample(pcm, rate));
+      let res;
+      try {
+        if (part.requests && !(await mayRetake(part))) break;
+        res = await withRetries(make);
+      } catch (e) {
+        // Out of quota on a retake: an earlier complete take is better than nothing.
+        if (e instanceof QuotaExhausted && best && !truncated(bestProblems)) {
+          job.warnings.push(`${label}: kept an earlier take, no quota left for a retake (${bestProblems.join("; ")})`);
+          return [best, bestProblems];
+        }
+        throw e;
+      }
+      if (part.requests++) extraUsed++;
+      takes++;
+      const clean = A.trimSilence(A.resample(res.pcm, res.rate));
       const problems = A.takeProblems(clean, txt, req.language);
       if (!problems.length) return [clean, []];
       if (!bestProblems || problems.length < bestProblems.length) { best = clean; bestProblems = problems; }
+      if (truncated(problems) ? policy.splitEarly && canSplit : policy.acceptSoft) break;
     }
-    if (!truncated(bestProblems)) job.warnings.push(`${label}: kept best of ${MAX_TAKES} takes (${bestProblems.join("; ")})`);
+    if (!best) throw neverTruncated(label);              // no budget left for even one take of this piece
+    if (!truncated(bestProblems)) job.warnings.push(`${label}: kept best of ${takes} take${takes > 1 ? "s" : ""} (${bestProblems.join("; ")})`);
     return [best, bestProblems];
   }
 
@@ -97,8 +144,9 @@ export async function runJob(job, gemini, ui) {
   const tick = (start, span) => { done++; ui.progress(start + span * done / units.length, `Recording voice: part ${done} of ${units.length}`); };
 
   async function record(i, makeAudio, start, span) {
+    started++;
     if (await A.store.hasPart(job.id, i)) { tick(start, span); return; }    // resumed: already recorded
-    const pcm = await makeAudio();
+    const pcm = await makeAudio({ requests: 0 });
     await A.store.putPart(job.id, i, A.fade(pcm));
     tick(start, span);
   }
@@ -106,46 +154,52 @@ export async function runJob(job, gemini, ui) {
   if (req.mode === "conversation") {
     if (!job.script) {
       const parts = chunkText(text, 6000).map((p) => p.join(" "));
-      let turns = [];
-      for (let i = 0; i < parts.length; i++) {
+      job.scriptPieces ||= [];          // each piece is saved as it is written, so resuming skips it
+      for (let i = job.scriptPieces.length; i < parts.length; i++) {
+        if (ui.cancelled()) throw new Cancelled();
+        const turns = job.scriptPieces.flat();
         ui.progress(0.02 + 0.25 * i / parts.length, `Writing the two-host script: part ${i + 1} of ${parts.length}`);
         const tail = turns.slice(-6).map((t) => `${t.speaker}: ${t.text}`).join("\n");
         const prompt = podcastScriptPrompt(parts[i], req.language, opts.hostNames, i + 1, parts.length, tail, genders);
-        turns = turns.concat(await withRetries(async () => {
+        job.scriptPieces.push(await withRetries(async () => {
           const t = parseDialogue(await gemini.writeText(prompt), opts.hostNames);
           if (t.length < 2 || new Set(t.map((x) => x.speaker)).size < 2) {
             throw new ProviderError("Script writer returned an unusable dialogue", { retryable: true });
           }
           return t;
         }, 4));
+        await A.store.saveJob(job);
       }
-      job.script = turns;
+      job.script = job.scriptPieces.flat();
+      delete job.scriptPieces;
       await A.store.saveJob(job);     // the script is kept, so resuming never re-writes it
     }
     const voices = { [opts.hostNames[0]]: v1, [opts.hostNames[1]]: v2 };
     units = batchTurns(job.script, job.chunkChars);
     gap = TURN_GAP + 0.1;
-    const speak = async (batch, label) => {
+    const speak = async (batch, label, part, depth = 0) => {
       const txt = batch.map((t) => t.text).join(" ");
-      const [pcm, problems] = await bestTake(() => gemini.synthesizeDialogue(batch, voices, opts), txt, label);
+      const canSplit = batch.length > 1 && depth < policy.maxDepth;
+      const [pcm, problems] = await bestTake(() => gemini.synthesizeDialogue(batch, voices, opts), txt, label, part, { depth, canSplit });
       if (!truncated(problems)) return pcm;
-      if (batch.length < 2) throw neverTruncated(label);
+      if (!canSplit) throw neverTruncated(label);
       const [a, b] = halves(batch);
-      return joinPcm([await speak(a, label), await speak(b, label)], TURN_GAP);
+      return joinPcm([await speak(a, label, part, depth + 1), await speak(b, label, part, depth + 1)], TURN_GAP);
     };
-    await pool(units, gemini.concurrency, (i, batch) => record(i, () => speak(batch, `Part ${i + 1}`), 0.28, 0.62),
+    await pool(units, gemini.concurrency, (i, batch) => record(i, (part) => speak(batch, `Part ${i + 1}`, part), 0.28, 0.62),
       ui.cancelled);
   } else {
     units = chunkText(text, job.chunkChars);
-    const speak = async (txt, label, depth = 0) => {
-      const [pcm, problems] = await bestTake(() => gemini.synthesize(txt, v1, opts), txt, label);
-      if (!truncated(problems)) return pcm;
+    const speak = async (txt, label, part, depth = 0) => {
       const sentences = splitSentences(txt);
-      if (depth >= 3 || sentences.length < 2) throw neverTruncated(label);
+      const canSplit = sentences.length > 1 && depth < policy.maxDepth;
+      const [pcm, problems] = await bestTake(() => gemini.synthesize(txt, v1, opts), txt, label, part, { depth, canSplit });
+      if (!truncated(problems)) return pcm;
+      if (!canSplit) throw neverTruncated(label);
       const [a, b] = halves(sentences);      // shorter requests are cut off far less often
-      return joinPcm([await speak(a.join(" "), label, depth + 1), await speak(b.join(" "), label, depth + 1)], 0.35);
+      return joinPcm([await speak(a.join(" "), label, part, depth + 1), await speak(b.join(" "), label, part, depth + 1)], 0.35);
     };
-    await pool(units, gemini.concurrency, (i, paras) => record(i, () => speak(paras.join("\n\n"), `Part ${i + 1}`),
+    await pool(units, gemini.concurrency, (i, paras) => record(i, (part) => speak(paras.join("\n\n"), `Part ${i + 1}`, part),
       req.topic ? 0.25 : 0.02, req.topic ? 0.65 : 0.88),
       ui.cancelled);
   }
@@ -156,7 +210,7 @@ export async function runJob(job, gemini, ui) {
   for (let i = 0; i < units.length; i++) {
     const { audio, kweighted } = await A.masterPart(await A.store.getPart(job.id, i));
     meter.add(kweighted);
-    await A.store.putPart(job.id, `m${i}`, audio);
+    await A.store.putMastered(job.id, i, audio);
   }
   const gain = Math.min(4, 10 ** ((TARGET_LUFS - meter.integratedDb()) / 20));
   const enc = A.startEncoder(96);
@@ -165,7 +219,7 @@ export async function runJob(job, gemini, ui) {
   let samples = pad(0.35).length;
   for (let i = 0; i < units.length; i++) {
     ui.progress(0.94 + 0.05 * i / units.length, "Encoding MP3");
-    const m = await A.store.getPart(job.id, `m${i}`);
+    const m = await A.store.getMastered(job.id, i);
     samples += m.length;
     enc.push(m, gain);
     const p = pad(i < units.length - 1 ? gap : 0.6);
@@ -173,7 +227,10 @@ export async function runJob(job, gemini, ui) {
     enc.push(p, 1);
   }
   const blob = await enc.finish();
-  await A.store.deleteParts(job.id);
+  // MP3 first, then mark done, then free the parts: a crash in between never loses the podcast.
   await A.store.putPart(job.id, "mp3", blob);
+  job.status = "done";
+  await A.store.saveJob(job);
+  await A.store.deleteParts(job.id, ["mp3"]);
   return { blob, samplesDuration: samples / A.SAMPLE_RATE };
 }
