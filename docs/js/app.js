@@ -151,6 +151,22 @@ if (state.research?.angles) {
   state.focus = new Set(state.research.angles.slice(0, 2).map((x) => x.id));
   state.lang = state.research.language || state.lang;
 } else state.research = null;
+// The choices made on the research (focus, own focus, length, title) survive a reload too.
+function saveTopicSetup() {
+  store.set("topicSetup", JSON.stringify({ focus: [...state.focus], custom: $("customFocus").value,
+    minutes: $("minutes").value, title: $("title").value }));
+}
+function restoreTopicSetup() {
+  if (!state.research) return;
+  try {
+    const s = JSON.parse(store.get("topicSetup", "null"));
+    if (!s) return;
+    state.focus = new Set(s.focus.filter((id) => state.research.angles.some((a) => a.id === id)));
+    $("customFocus").value = s.custom || "";
+    $("minutes").value = s.minutes || 8;
+    if (s.title) $("title").value = s.title;
+  } catch { /* old or corrupt */ }
+}
 const safeUrl = (u) => /^https?:\/\//i.test(u || "");
 const t = (k) => I18N[state.ui][k] ?? k;
 const fmt = (s, v) => s.replace(/\{(\w+)\}/g, (_, k) => v[k] ?? "");
@@ -255,7 +271,7 @@ function renderFree(f) {
   else if (f.status === "free_multi_day") { cls = "wait"; html = fmt(t("fMulti"), { days: f.days, reset: resetTime(f.reset_at) }); }
   else html = fmt(t("fFree"), { need: tts.needed + tts.reserve, left: tts.left_today });
   if (txt && f.status !== "paid") html += fmt(t("fFreeScript"), { need: txt.needed + txt.reserve, left: txt.left_today });
-  if (web && f.status !== "paid") html += fmt(t("fSearch"), { left: web.left_today });
+  if (web?.left_today && f.status !== "paid") html += fmt(t("fSearch"), { left: web.left_today });
   if (!freeOpts().freeOnly && f.status !== "free") html += t("fOff");
   const sub = [];
   if (tts.reserve) sub.push(fmt(t("fReserve"), { reserve: tts.reserve }));
@@ -315,12 +331,13 @@ function renderResearch() {
     b.type = "button";
     b.className = "angle" + (state.focus.has(a.id) ? " on" : "");
     b.setAttribute("aria-pressed", state.focus.has(a.id));
-    b.innerHTML = `<span class="tick">✓</span><span><b></b><span class="d"></span></span>`;
+    b.innerHTML = `<span class="tick">✓</span><span><b dir="auto"></b><span class="d" dir="auto"></span></span>`;
     b.querySelector("b").textContent = a.title;
     b.querySelector(".d").textContent = a.description;
     b.onclick = () => {
       state.focus.has(a.id) ? state.focus.delete(a.id) : state.focus.add(a.id);
       b.classList.toggle("on", state.focus.has(a.id));
+      saveTopicSetup();
       b.setAttribute("aria-pressed", state.focus.has(a.id));
     };
     box.appendChild(b);
@@ -352,10 +369,14 @@ async function findSources() {
     const g = gemini();
     g.gate.onWait = (s) => topicStatus(`${t("researching")} (${Math.round(s)}s)`);
     const r = await research(topic, state.lang, g);
+    const oldTitle = state.research?.title;
     state.research = r;
     state.focus = new Set(r.angles.slice(0, 2).map((a) => a.id));
     store.set("research", JSON.stringify(r));
-    if (!$("title").value || Object.values(I18N).some((d) => d.defaultTitle === $("title").value)) $("title").value = r.title;
+    const title = $("title").value;
+    if (!title || title === oldTitle || Object.values(I18N).some((d) => d.defaultTitle === title)) $("title").value = r.title;
+    $("customFocus").value = "";
+    saveTopicSetup();
     topicStatus("");
     renderResearch();
   } catch (e) {
@@ -478,7 +499,7 @@ async function generate() {
   let topic = null;
   if (fromTopic) {
     const r = state.research;
-    if (!r) return showError(t("needResearch"));
+    if (!r || $("topic").value.trim() !== r.topic) return showError(t("needResearch"));   // topic changed: search again
     const focus = r.angles.filter((a) => state.focus.has(a.id)).map((a) => `${a.title} - ${a.description}`);
     if ($("customFocus").value.trim()) focus.push($("customFocus").value.trim());
     if (!focus.length) return showError(t("needFocus"));
@@ -612,12 +633,9 @@ seg("srcSeg", "src", () => { store.set("src", state.src); showError(""); applyUI
 $("researchBtn").addEventListener("click", findSources);
 $("topic").addEventListener("keydown", (e) => { if (e.key === "Enter") { e.preventDefault(); findSources(); } });
 $("minutes").addEventListener("input", onTextChange);
-$("topic").addEventListener("input", () => {
-  // A different topic needs new sources: don't build it on the old research.
-  if (state.research && $("topic").value.trim() !== state.research.topic) {
-    state.research = null; store.set("research", "null"); topicStatus(""); renderResearch(); onTextChange();
-  }
-});
+$("minutes").addEventListener("change", saveTopicSetup);
+$("customFocus").addEventListener("change", saveTopicSetup);
+$("title").addEventListener("change", () => state.src === "topic" && saveTopicSetup());
 state.voice = store.get("voice", state.voice);
 state.voice2 = store.get("voice2", state.voice2);
 
@@ -683,5 +701,7 @@ $("saveSettings").addEventListener("click", () => {
   else applyUI();
 });
 
+applyUI();
+restoreTopicSetup();
 applyUI();
 restoreLastJob();

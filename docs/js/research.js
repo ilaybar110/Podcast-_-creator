@@ -22,7 +22,8 @@ export const speechChars = (minutes, language) => Math.round(minutes * 60 * (CHA
 /** Requests a topic podcast needs, for the free-quota badge. */
 export function topicPlan(minutes, language, mode, chunkChars) {
   const chars = speechChars(minutes, language) * (mode === "conversation" ? 1.1 : 1);   // + speaker labels
-  return { gemini_tts: Math.ceil(chars / chunkChars), gemini_text: scriptParts(minutes, language), gemini_search: 1 };
+  // Parts end on paragraph boundaries, so they average a bit under the chunk size.
+  return { gemini_tts: Math.ceil(chars / (0.85 * chunkChars)), gemini_text: scriptParts(minutes, language), gemini_search: 1 };
 }
 
 // ------------------------------------------------------------------ Wikipedia (free)

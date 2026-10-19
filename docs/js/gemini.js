@@ -192,7 +192,8 @@ export async function freeVerdict({ chars, mode, apiKey, overrides, billing, alr
     const left = Math.max(0, lim.rpd - ledger.used(kid, b));
     const reserve = b === "gemini_tts" ? Math.ceil(need[b] * 0.15) : 1;
     const total = need[b] + reserve;
-    if (total > left) days = Math.max(days, 1 + Math.ceil((total - left) / Math.max(1, lim.rpd)));
+    // A missing search only skips the optional deep dive, so it never delays the podcast.
+    if (total > left && b !== "gemini_search") days = Math.max(days, 1 + Math.ceil((total - left) / Math.max(1, lim.rpd)));
     buckets[b] = { needed: need[b], reserve, left_today: left, per_day: lim.rpd, per_minute: lim.rpm,
       minutes_at_least: Math.round(10 * need[b] / Math.max(1, lim.rpm)) / 10 };
   }

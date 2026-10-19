@@ -47,7 +47,8 @@ assert.equal(r2.searched, false); assert.equal(g.calls.text, 1); assert.equal(r2
 // script: 20 min English = 2 parts; deep dive once; resuming repeats nothing
 assert.equal(R.scriptParts(20, "en"), 2);
 const plan = R.topicPlan(10, "he", "narrator", 3000);
-assert.equal(plan.gemini_tts, 3); assert.equal(plan.gemini_text, 1); assert.equal(plan.gemini_search, 1);
+assert.equal(plan.gemini_tts, 3);
+assert.equal(R.topicPlan(8, "he", "narrator", 3000).gemini_tts, 3); assert.equal(plan.gemini_text, 1); assert.equal(plan.gemini_search, 1);
 for (const mode of ["narrator", "conversation"]) {
   g = fakeGemini();
   const saved = [];
