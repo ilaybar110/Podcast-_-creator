@@ -170,7 +170,7 @@ function renderVoiceGrid(container, k) {
     card.setAttribute("role", "button");
     card.innerHTML = `<button class="play" aria-label="preview">▶</button><div class="meta"><div class="name"></div><div class="desc"></div></div>`;
     card.querySelector(".name").textContent = v.name;
-    card.querySelector(".play").title = t("previewCost");
+    card.querySelector(".play").title = readySamples.has(`${state.lang}/${v.id}`) ? "▶" : t("previewCost");
     if (v.recommended) {
       const s = document.createElement("span"); s.className = "star"; s.textContent = "★ " + t("recommended");
       card.querySelector(".name").appendChild(s);
@@ -254,6 +254,10 @@ const SILENCE_URL = (() => {
 })();
 let previewSeq = 0, playingBtn = null;
 const previewCache = new Map();
+// Samples recorded in advance (tools/make_previews.py) ship with the site: instant, no quota.
+let readySamples = new Set();
+fetch("previews/manifest.json").then((r) => (r.ok ? r.json() : { samples: [] }))
+  .then((m) => { readySamples = new Set(m.samples); renderVoices(); }).catch(() => {});
 
 function resetPlayButtons() {
   document.querySelectorAll(".play").forEach((b) => { b.textContent = "▶"; });
@@ -284,6 +288,9 @@ function preview(v, btn) {
   if (wasPlaying) return;                                  // second tap = stop
   if (!key()) return showError(t("needKey"));
   if (freeOpts().billing && freeOpts().freeOnly) return showError(t("paidBlocked"));
+  if (readySamples.has(`${state.lang}/${v.id}`)) {
+    return playPreview(`previews/${state.lang}/${v.id}.mp3`, btn).catch((e) => showError(`${t("previewFail")}: ${e.message}`));
+  }
   const ck = [v.id, state.lang, state.style, state.pace].join("|");
   const cached = previewCache.get(ck);
   if (cached) return playPreview(cached, btn).catch((e) => showError(`${t("previewFail")}: ${e.message}`));

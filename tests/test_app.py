@@ -399,3 +399,28 @@ def test_web_chunking_matches_python():
               "process.stdout.write(JSON.stringify(s.map(t => m.chunkText(m.cleanText(t), 1500)))); })")
     out = subprocess.run(["node", "-e", script], input=json.dumps(samples), capture_output=True, text=True, check=True)
     assert json.loads(out.stdout) == [chunk_text(clean_text(t), 1500) for t in samples]
+
+
+def test_make_previews_records_missing_samples_in_order(tmp_path, monkeypatch, ledger):
+    import json
+    import sys
+    from tools import make_previews
+    pcm = speechlike(9.0)
+
+    async def fake_generate(self, model, body):
+        return {"candidates": [{"content": {"parts": [{"inlineData": {
+            "mimeType": "audio/L16;codec=pcm;rate=24000", "data": base64.b64encode(pcm.tobytes()).decode()}}]}}]}
+
+    async def fake_model(self):
+        return "gemini-tts-test"
+
+    monkeypatch.setattr(GeminiProvider, "_generate", fake_generate)
+    monkeypatch.setattr(GeminiProvider, "tts_model", fake_model)
+    monkeypatch.setenv("GEMINI_API_KEY", "k")
+    monkeypatch.setattr(make_previews, "OUT", tmp_path)
+    monkeypatch.setattr(sys, "argv", ["make_previews", "--max", "3"])
+    asyncio.run(make_previews.main())
+    assert json.loads((tmp_path / "manifest.json").read_text())["samples"] == ["en/Sulafat", "he/Achird", "he/Sulafat"]
+    asyncio.run(make_previews.main())          # next run continues where it stopped
+    assert len(list(tmp_path.glob("*/*.mp3"))) == 6
+    assert (tmp_path / "en" / "Achird.mp3").exists()

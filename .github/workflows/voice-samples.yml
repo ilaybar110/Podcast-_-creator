@@ -1,0 +1,57 @@
+name: Record voice samples
+
+# Pre-records the ▶ voice samples for the web app (docs/previews) with the repository's
+# GEMINI_API_KEY secret. A few per day, so most of the free quota stays available for podcasts.
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "23 8 * * *"   # shortly after the Gemini free quota resets (midnight Pacific)
+  push:
+    paths:
+      - .github/workflows/voice-samples.yml
+      - tools/make_previews.py
+
+permissions:
+  contents: write
+
+concurrency:
+  group: voice-samples
+  cancel-in-progress: false
+
+jobs:
+  record:
+    runs-on: ubuntu-latest
+    env:
+      GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check for the key
+        id: key
+        run: |
+          if [ -z "$GEMINI_API_KEY" ]; then
+            echo "Add a GEMINI_API_KEY repository secret to record voice samples."
+            echo "present=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "present=true" >> "$GITHUB_OUTPUT"
+          fi
+      - uses: actions/setup-python@v5
+        if: steps.key.outputs.present == 'true'
+        with:
+          python-version: "3.12"
+      - name: Install
+        if: steps.key.outputs.present == 'true'
+        run: |
+          sudo apt-get install -y --no-install-recommends ffmpeg > /dev/null
+          pip install -q -r requirements.txt
+      - name: Record missing samples
+        if: steps.key.outputs.present == 'true'
+        run: python -m tools.make_previews --max 8
+      - name: Commit
+        if: steps.key.outputs.present == 'true'
+        run: |
+          git add docs/previews
+          if git diff --cached --quiet; then echo "No new samples."; exit 0; fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git commit -m "Record voice samples"
+          git push
