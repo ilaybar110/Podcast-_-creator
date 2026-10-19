@@ -1,5 +1,6 @@
 // Podcast generation in the browser (port of app/jobs.py + app/script_writer.py).
 import { cleanText, chunkText, splitSentences } from "./text.js";
+import { prepareForSpeech } from "./speech.js";
 import { podcastScriptPrompt, parseDialogue } from "./prompts.js";
 import { Cancelled, ProviderError, QuotaExhausted, VOICES, withRetries } from "./gemini.js";
 import * as A from "./audio.js";
@@ -31,6 +32,8 @@ export function batchTurns(turns, maxChars) {
   return batches;
 }
 
+// What the voice reads: numbers/symbols spelled out (the saved and shown script stays as written).
+const spokenTurns = (batch) => batch.map((t) => ({ ...t, text: prepareForSpeech(t.text) }));
 const halves = (a) => [a.slice(0, a.length >> 1), a.slice(a.length >> 1)];
 const truncated = (p) => p.some((x) => x.startsWith("too short"));
 const neverTruncated = (label) => new ProviderError(`${label}: the voice engine keeps cutting this passage short, ` +
@@ -133,7 +136,7 @@ export async function runJob(job, gemini, ui) {
       const [a, b] = halves(batch);
       return joinPcm([await speak(a, label), await speak(b, label)], TURN_GAP);
     };
-    await pool(units, gemini.concurrency, (i, batch) => record(i, () => speak(batch, `Part ${i + 1}`), 0.28, 0.62),
+    await pool(units, gemini.concurrency, (i, batch) => record(i, () => speak(spokenTurns(batch), `Part ${i + 1}`), 0.28, 0.62),
       ui.cancelled);
   } else {
     units = chunkText(text, job.chunkChars);
@@ -145,7 +148,7 @@ export async function runJob(job, gemini, ui) {
       const [a, b] = halves(sentences);      // shorter requests are cut off far less often
       return joinPcm([await speak(a.join(" "), label, depth + 1), await speak(b.join(" "), label, depth + 1)], 0.35);
     };
-    await pool(units, gemini.concurrency, (i, paras) => record(i, () => speak(paras.join("\n\n"), `Part ${i + 1}`),
+    await pool(units, gemini.concurrency, (i, paras) => record(i, () => speak(prepareForSpeech(paras.join("\n\n")), `Part ${i + 1}`),
       req.topic ? 0.25 : 0.02, req.topic ? 0.65 : 0.88),
       ui.cancelled);
   }

@@ -436,3 +436,14 @@ def test_web_topic_research_and_script():
     test = Path(__file__).resolve().parent / "web_topic_test.mjs"
     out = subprocess.run(["node", str(test)], capture_output=True, text=True)
     assert out.returncode == 0, out.stderr
+
+
+def test_web_hebrew_speech_prep_matches_python():
+    import shutil
+    import subprocess
+    from pathlib import Path
+    if not shutil.which("node"):
+        pytest.skip("node not installed")
+    test = Path(__file__).resolve().parent / "web_hebrew_test.mjs"
+    out = subprocess.run(["node", str(test)], capture_output=True, text=True)
+    assert out.returncode == 0, out.stderr
