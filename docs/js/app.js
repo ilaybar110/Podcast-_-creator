@@ -25,11 +25,11 @@ const I18N = {
     emptyText: "הדביקו טקסט קודם.", needKey: "הוסיפו קודם מפתח Gemini (למעלה).", starting: "מתחילים…",
     size: "גודל", previewFail: "התצוגה המקדימה נכשלה", defaultTitle: "הפודקאסט שלי",
     keyTitle: "חיבור חד-פעמי: מפתח Gemini חינמי",
-    keyStep1: 'היכנסו ל-<a href="https://aistudio.google.com/apikey" target="_blank" rel="noopener">aistudio.google.com/apikey</a> עם חשבון Google.',
-    keyStep2: 'לחצו "Create API key" והעתיקו את המפתח. עדיף בפרויקט בלי חיוב (Billing) — כך אי אפשר לחייב אתכם.',
-    keyStep3: "הדביקו אותו כאן. המפתח נשמר רק בטלפון שלכם ונשלח ישירות ל-Google.",
+    keyStep1: 'היכנסו ל-<bdi dir="ltr"><a href="https://aistudio.google.com/apikey" target="_blank" rel="noopener">aistudio.google.com/apikey</a></bdi> עם חשבון <bdi>Google</bdi>.',
+    keyStep2: 'לחצו <bdi dir="ltr">"Create API key"</bdi> והעתיקו את המפתח. עדיף בפרויקט בלי חיוב (<bdi>Billing</bdi>) — כך אי אפשר לחייב אתכם.',
+    keyStep3: "הדביקו אותו כאן. המפתח נשמר רק בטלפון שלכם ונשלח ישירות ל-<bdi>Google</bdi>.",
     keyChecking: "בודקים את המפתח…", keyOk: "✓ המפתח עובד. אפשר להתחיל!",
-    privacy: "הכול רץ בדפדפן שלכם. הטקסט והמפתח נשלחים ל-Google; במצב נושא, מילות הנושא נשלחות גם ל-Wikipedia.",
+    privacy: "הכול רץ בדפדפן שלכם. הטקסט והמפתח נשלחים ל-<bdi>Google</bdi>; במצב נושא, מילות הנושא נשלחות גם ל-<bdi>Wikipedia</bdi>.",
     rememberKey: "זכור את המפתח במכשיר הזה (אם כבוי, הוא נשמר רק עד סגירת הלשונית)",
     forgetKey: "שכחו את המפתח", clearAll: "מחיקת כל הנתונים שלי",
     keyForgotten: "המפתח נמחק מהמכשיר הזה.",
@@ -56,7 +56,7 @@ const I18N = {
     cancelled: "בוטל.",
     tapAgain: "הדוגמה מוכנה — הקישו שוב על ▶ כדי לשמוע.",
     srcText: "מהטקסט שלי", srcTopic: "מנושא — מחקר מהאינטרנט", topicTitle: "על מה הפודקאסט?",
-    topicPlaceholder: "למשל: איך עובד הזיכרון האנושי, המהפכה התעשייתית, בינה מלאכותית ברפואה…",
+    topicPlaceholder: "למשל: איך עובד הזיכרון האנושי",
     findSources: "חיפוש מקורות",
     topicHint: "האפליקציה תחפש מקורות ב-Google ובוויקיפדיה ותציע לכם כיווני התמקדות. החיפוש חינמי ולא נוגע במכסת הקולות.",
     researching: "מחפשים מקורות ומכינים סיכום מחקר… (כחצי דקה)",
@@ -73,6 +73,15 @@ const I18N = {
     cantResume: "אי אפשר להמשיך את היצירה הזו — צרו את הפודקאסט מחדש.",
     errorText: "היצירה נעצרה בגלל שגיאה: {error} החלקים שכבר הוקלטו שמורים — אפשר לנסות להמשיך מאיפה שעצרנו.",
     noStorage: "הדפדפן לא מאפשר שמירה במכשיר (אולי גלישה פרטית), אז היצירה תרוץ בזיכרון בלבד: אי אפשר יהיה לעצור ולהמשיך אחר כך. השאירו את הדף פתוח עד הסוף.",
+    voiceStyle: "קול וסגנון", change: "שינוי", done: "סגירה", close: "סגירה",
+    share: "שיתוף / שמירה בקבצים", shareFail: "השיתוף נכשל", playSample: "השמעת דוגמה של {name}",
+    geminiKeyLabel: "מפתח <bdi>Gemini API</bdi>", geminiKeyAria: "מפתח Gemini API", srcAria: "מקור הפודקאסט",
+    progressAria: "התקדמות היצירה",
+    lockWarn: "<b>אל תנעלו את המסך ואל תעברו לאפליקציה אחרת</b> עד שהפודקאסט מוכן — המסך נשמר דלוק בזמן היצירה.",
+    lockWarnNoWake: "<b>אל תנעלו את המסך ואל תעברו לאפליקציה אחרת</b> עד שהפודקאסט מוכן. הדפדפן הזה לא תומך בשמירת המסך דלוק, אז כדאי להקיש על המסך מדי פעם.",
+    lockEtaMin: "זמן יצירה משוער: לפחות ~{min} דק׳.", lockEtaLen: "אורך הפודקאסט המשוער: ~{len}. היצירה אורכת כמה דקות.",
+    stalledText: "היצירה נעצרה כשהמסך ננעל או שעברתם לאפליקציה אחרת.",
+    infoFree: "✓ חינם", infoMulti: "⏳ כמה ימים", infoPaid: "💳 בתשלום", infoLen: "~{len}",
   },
   en: {
     title: "Podcast Creator", subtitle: "Any text, any length — into a warm, human-sounding podcast MP3",
@@ -122,7 +131,7 @@ const I18N = {
     cancelled: "Cancelled.",
     tapAgain: "The sample is ready — tap ▶ again to listen.",
     srcText: "From my text", srcTopic: "From a topic — web research", topicTitle: "What is the podcast about?",
-    topicPlaceholder: "e.g. how human memory works, the industrial revolution, AI in medicine…",
+    topicPlaceholder: "e.g. how human memory works",
     findSources: "Find sources",
     topicHint: "The app searches Google and Wikipedia for sources and suggests what to focus on. Searching is free and doesn't touch the voice quota.",
     researching: "Finding sources and preparing research notes… (about 30 seconds)",
@@ -139,6 +148,15 @@ const I18N = {
     cantResume: "This podcast can't be continued — please create it again.",
     errorText: "Recording stopped because of an error: {error} The parts already recorded are saved — you can try to continue where it stopped.",
     noStorage: "This browser doesn't allow saving on the device (private browsing?), so the podcast is made in memory only: it can't be paused and continued later. Keep this page open until it's done.",
+    voiceStyle: "Voice & style", change: "Change", done: "Close", close: "Close",
+    share: "Share / Save to Files", shareFail: "Sharing failed", playSample: "Play a sample of {name}",
+    geminiKeyLabel: "<bdi>Gemini API</bdi> key", geminiKeyAria: "Gemini API key", srcAria: "Podcast source",
+    progressAria: "Recording progress",
+    lockWarn: "<b>Don't lock the screen or switch apps</b> until the podcast is ready — the screen is kept awake while it records.",
+    lockWarnNoWake: "<b>Don't lock the screen or switch apps</b> until the podcast is ready. This browser can't keep the screen awake, so tap the screen now and then.",
+    lockEtaMin: "Estimated recording time: at least ~{min} min.", lockEtaLen: "Estimated podcast length: ~{len}. Recording takes a few minutes.",
+    stalledText: "Recording stopped when the screen locked or you switched apps.",
+    infoFree: "✓ Free", infoMulti: "⏳ Several days", infoPaid: "💳 Paid", infoLen: "~{len}",
   },
 };
 const DESC_HE = {
@@ -228,19 +246,26 @@ function applyUI() {
   // innerHTML is only used for constant strings from the I18N table (never user, network or computed values).
   document.querySelectorAll("[data-i18n-html]").forEach((el) => { el.innerHTML = t(el.dataset.i18nHtml); });
   document.querySelectorAll("[data-i18n-placeholder]").forEach((el) => { el.placeholder = t(el.dataset.i18nPlaceholder); });
+  document.querySelectorAll("[data-i18n-aria]").forEach((el) => { el.setAttribute("aria-label", t(el.dataset.i18nAria)); });
   $("uiLangBtn").textContent = state.ui === "he" ? "English" : "עברית";
   if (!$("title").value || Object.values(I18N).some((d) => d.defaultTitle === $("title").value)) $("title").value = t("defaultTitle");
   const chips = $("styles");
   chips.innerHTML = "";
   for (const [id, s] of Object.entries(STYLES)) {
     const b = document.createElement("button");
+    b.type = "button";
     b.className = "chip" + (id === state.style ? " on" : "");
+    b.setAttribute("aria-pressed", id === state.style);
     b.textContent = state.ui === "he" ? s.label_he : s.label_en;
-    b.onclick = () => { state.style = id; [...chips.children].forEach((c) => c.classList.toggle("on", c === b)); };
+    b.onclick = () => {
+      state.style = id;
+      [...chips.children].forEach((c) => { c.classList.toggle("on", c === b); c.setAttribute("aria-pressed", c === b); });
+      updateVoiceSummary();
+    };
     chips.appendChild(b);
   }
   $("keyCard").hidden = !!key();
-  setSeg("srcSeg", state.src);
+  setSeg("srcSeg", state.src); setSeg("langSeg", state.lang); setSeg("modeSeg", state.mode); setSeg("paceSeg", state.pace);
   $("topicCard").hidden = state.src !== "topic";
   $("textCard").hidden = state.src === "topic";
   $("minutesOut").textContent = `${$("minutes").value} ${t("minutesUnit")}`;
@@ -255,42 +280,78 @@ function renderVoiceGrid(container, k) {
   container.innerHTML = "";
   const list = state.showAll ? VOICES : VOICES.filter((v) => v.recommended || v.id === state[k]);
   for (const v of list) {
-    const card = document.createElement("div");
-    card.className = "voice" + (state[k] === v.id ? " on" : "");
-    card.tabIndex = 0;
-    card.setAttribute("role", "button");
-    card.innerHTML = `<button class="play" aria-label="preview">▶</button><div class="meta"><div class="name"></div><div class="desc"></div></div>`;
+    const on = state[k] === v.id;
+    const item = document.createElement("div");
+    item.className = "voice-item";
+    const card = document.createElement("button");
+    card.type = "button";
+    card.className = "voice" + (on ? " on" : "");
+    card.setAttribute("role", "radio");
+    card.setAttribute("aria-checked", on);
+    card.tabIndex = on ? 0 : -1;
+    card.innerHTML = `<span class="meta"><span class="name"></span><span class="desc"></span></span>`;
     card.querySelector(".name").textContent = v.name;
-    card.querySelector(".play").title = readySamples.has(`${state.lang}/${v.id}`) ? "▶" : t("previewCost");
     if (v.recommended) {
       const s = document.createElement("span"); s.className = "star"; s.textContent = "★ " + t("recommended");
       card.querySelector(".name").appendChild(s);
     }
     card.querySelector(".desc").textContent = `${t(v.gender)} · ${state.ui === "he" ? DESC_HE[v.description] || v.description : v.description}`;
-    const choose = () => { state[k] = v.id; store.set(k, v.id); renderVoices(); };
-    card.addEventListener("click", (e) => { if (!e.target.closest(".play")) choose(); });
-    card.addEventListener("keydown", (e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); choose(); } });
-    card.querySelector(".play").addEventListener("click", (e) => { e.stopPropagation(); preview(v, e.currentTarget); });
-    container.appendChild(card);
+    const play = document.createElement("button");
+    play.type = "button";
+    play.className = "play";
+    play.textContent = "▶";
+    play.setAttribute("aria-label", fmt(t("playSample"), { name: v.name }));
+    play.title = readySamples.has(`${state.lang}/${v.id}`) ? "▶" : t("previewCost");
+    const choose = (refocus) => {
+      state[k] = v.id; store.set(k, v.id); renderVoices();
+      if (refocus) container.querySelector('[aria-checked="true"]')?.focus();
+    };
+    card.addEventListener("click", () => choose(false));
+    card.addEventListener("keydown", (e) => {
+      const dir = { ArrowDown: 1, ArrowRight: state.ui === "he" ? -1 : 1, ArrowUp: -1, ArrowLeft: state.ui === "he" ? 1 : -1 }[e.key];
+      if (!dir) return;
+      e.preventDefault();
+      const radios = [...container.querySelectorAll('[role="radio"]')];
+      const next = radios[(radios.indexOf(card) + dir + radios.length) % radios.length];
+      const id = VOICES.find((x) => x.name === next.querySelector(".name").firstChild.textContent)?.id;
+      if (id) { state[k] = id; store.set(k, id); renderVoices(); container.querySelector('[aria-checked="true"]')?.focus(); }
+    });
+    play.addEventListener("click", (e) => { e.stopPropagation(); preview(v, e.currentTarget); });
+    item.append(card, play);
+    container.appendChild(item);
   }
-  const more = document.createElement("button");
-  more.className = "chip";
-  more.textContent = state.showAll ? t("showLess") : t("showAll");
-  more.onclick = () => { state.showAll = !state.showAll; renderVoices(); };
-  container.appendChild(more);
 }
 
 function renderVoices() {
   renderVoiceGrid($("voices"), "voice");
   $("voice2Wrap").hidden = state.mode !== "conversation";
   if (state.mode === "conversation") renderVoiceGrid($("voices2"), "voice2");
+  $("voiceMore").textContent = state.showAll ? t("showLess") : t("showAll");
+  $("voiceMore").setAttribute("aria-pressed", state.showAll);
+  updateVoiceSummary();
 }
+
+// "Sulafat · warm · natural" - what the collapsed voice section shows.
+function updateVoiceSummary() {
+  const el = $("voiceSummary");
+  if (!el) return;
+  const st = STYLES[state.style];
+  const bits = [state.mode === "conversation" ? `${state.voice} + ${state.voice2}` : state.voice,
+    st ? (state.ui === "he" ? st.label_he : st.label_en) : "", t(state.pace)];
+  el.innerHTML = "";
+  bits.filter(Boolean).forEach((x, i) => {
+    if (i) el.append(" · ");
+    const bdi = document.createElement("bdi"); bdi.textContent = x; el.append(bdi);
+  });
+}
+$("voiceMore").addEventListener("click", () => { state.showAll = !state.showAll; renderVoices(); });
 
 function updateHint() {
   const topic = state.src === "topic";
   $("modeHint").textContent = state.mode === "conversation" ? t(topic ? "convTopicHint" : "convHint")
     : t(topic ? "narratorTopicHint" : "narratorHint");
   $("generate").disabled = state.busy;
+  $("genbar").hidden = state.busy;
 }
 
 /** Turns a string with constant <b>…</b> markup into DOM nodes; everything else becomes plain text. */
@@ -475,7 +536,7 @@ async function playPreview(url, btn) {
   } catch (e) {
     // Still blocked (very strict browser settings): the clip is ready now, so the next tap plays at once.
     resetPlayButtons();
-    if (e.name === "NotAllowedError") showError(t("tapAgain"));
+    if (e.name === "NotAllowedError") voiceMsg(t("tapAgain"));
     else throw e;
   }
 }
@@ -485,16 +546,16 @@ function preview(v, btn) {
   const wasPlaying = playingBtn === btn;
   previewEl.pause();
   resetPlayButtons();
-  showError("");
+  voiceMsg("");
   if (wasPlaying) return;                                  // second tap = stop
   if (readySamples.has(`${state.lang}/${v.id}`)) {   // shipped sample: no key, no quota
-    return playPreview(`previews/${state.lang}/${v.id}.mp3`, btn).catch((e) => showError(`${t("previewFail")}: ${e.message}`));
+    return playPreview(`previews/${state.lang}/${v.id}.mp3`, btn).catch((e) => voiceMsg(`${t("previewFail")}: ${e.message}`, true));
   }
-  if (!key()) return showError(t("needKey"));
-  if (freeOpts().billing && freeOpts().freeOnly) return showError(t("paidBlocked"));
+  if (!key()) return voiceMsg(t("needKey"), true);
+  if (freeOpts().billing && freeOpts().freeOnly) return voiceMsg(t("paidBlocked"), true);
   const ck = [v.id, state.lang, state.style, state.pace].join("|");
   const cached = previewCache.get(ck);
-  if (cached) return playPreview(cached, btn).catch((e) => showError(`${t("previewFail")}: ${e.message}`));
+  if (cached) return playPreview(cached, btn).catch((e) => voiceMsg(`${t("previewFail")}: ${e.message}`, true));
   // Unlock the shared player while we are still inside the tap.
   previewEl.src = SILENCE_URL;
   previewEl.play().catch(() => {});
@@ -524,22 +585,50 @@ function preview(v, btn) {
     await playPreview(url, btn);
   })().catch((e) => {
     if (seq === previewSeq) btn.textContent = "▶";
-    showError(`${t("previewFail")}: ${e.message}`);
+    voiceMsg(`${t("previewFail")}: ${e.message}`, true);
   });
 }
 
 // ---------------------------------------------------------------- jobs
+function voiceMsg(msg, isError = false) {
+  const el = $("voiceMsg");
+  el.hidden = !msg; el.textContent = msg || ""; el.classList.toggle("bad", isError);
+}
 function showError(msg) { $("error").hidden = !msg; $("error").textContent = msg || ""; }
 function fmtSize(b) { return b > 1048576 ? (b / 1048576).toFixed(1) + " MB" : Math.round(b / 1024) + " KB"; }
 
 let wakeLock = null;
 async function keepAwake(on) {
   try {
-    if (on && "wakeLock" in navigator) wakeLock = await navigator.wakeLock.request("screen");
+    if (on && "wakeLock" in navigator) { wakeLock = await navigator.wakeLock.request("screen"); state.wakeOk = true; }
     else if (!on && wakeLock) { await wakeLock.release(); wakeLock = null; }
-  } catch { /* not supported / denied */ }
+  } catch { state.wakeOk = false; /* not supported / denied */ }
+  if (on) renderLockNote();
 }
-document.addEventListener("visibilitychange", () => { if (state.busy && document.visibilityState === "visible") keepAwake(true); });
+/** The "don't lock the screen" notice shown while a job runs. */
+function renderLockNote() {
+  const supported = "wakeLock" in navigator && state.wakeOk !== false;
+  let html = t(supported ? "lockWarn" : "lockWarnNoWake");
+  const mins = state.free?.buckets?.gemini_tts?.minutes_at_least;
+  const eta = mins >= 1 ? fmt(t("lockEtaMin"), { min: Math.ceil(mins) })
+    : state.est ? fmt(t("lockEtaLen"), { len: state.est }) : "";
+  if (eta) html += ` <span class="eta">${eta}</span>`;
+  $("lockNote").innerHTML = html;
+}
+state.hiddenAt = 0; state.lastProgress = 0;
+document.addEventListener("visibilitychange", () => {
+  if (document.visibilityState === "hidden") { state.hiddenAt = Date.now(); return; }
+  const away = state.hiddenAt ? Date.now() - state.hiddenAt : 0;
+  state.hiddenAt = 0;
+  if (state.busy) {
+    keepAwake(true);
+    // The phone was locked / another app was in front: requests in flight usually died. If nothing
+    // has moved for a while, stop waiting and offer "Continue" right away.
+    if (away > 8000 && Date.now() - state.lastProgress > 20000 && state.gemini) { state.stalled = true; state.gemini.abortAll(); }
+  } else if (state.job && RESUMABLE.has(state.job.status) && $("paused").hidden && $("progress").hidden) {
+    showPaused(state.job);
+  }
+});
 
 async function generate() {
   if (state.busy) return;
@@ -580,11 +669,16 @@ async function run(job) {
   state.job = job; state.busy = true; state.cancel = false; state.t0 = Date.now();
   $("result").hidden = true; $("paused").hidden = true;
   $("progress").hidden = false; $("stage").textContent = t("starting"); $("barFill").style.width = "1%";
+  $("bar").setAttribute("aria-valuenow", 1);
+  state.stalled = false; state.lastProgress = Date.now(); renderLockNote();
   updateHint();
   keepAwake(true);
+  $("progress").scrollIntoView({ behavior: "smooth", block: "nearest" });
   const timer = setInterval(() => { $("elapsed").textContent = formatDuration((Date.now() - state.t0) / 1000); }, 1000);
   const ui = {
     progress(p, stage) {
+      state.lastProgress = Date.now();
+      if (p != null) $("bar").setAttribute("aria-valuenow", Math.round(p * 100));
       if (p != null) { $("barFill").style.width = Math.max(1, p * 100) + "%"; $("pct").textContent = Math.round(p * 100) + "%"; }
       if (stage) $("stage").textContent = stage;
     },
@@ -600,6 +694,9 @@ async function run(job) {
     if (e instanceof QuotaExhausted) {
       job.status = "paused"; job.resumeAt = e.resetAt.toISOString();
       showPaused(job);
+    } else if (e instanceof Cancelled && state.stalled) {
+      job.status = "error"; job.error = t("stalledText");
+      showPaused(job);
     } else if (e instanceof Cancelled) {
       job.status = "cancelled"; showError(t("cancelled"));
     } else if (job.status === "done") {
@@ -612,7 +709,7 @@ async function run(job) {
     await A.store.saveJob(job).catch(() => {});
   } finally {
     clearInterval(timer);
-    state.busy = false; state.gemini = null;
+    state.busy = false; state.gemini = null; state.stalled = false;
     $("progress").hidden = true;
     keepAwake(false);
     updateHint();
@@ -624,6 +721,7 @@ function showPaused(job) {
   $("pausedText").textContent = job.status === "paused" ? fmt(t("pausedText"), { reset: resetTime(job.resumeAt) })
     : job.status === "error" ? fmt(t("errorText"), { error: job.error || "?" }) : t("interruptedText");
   $("paused").hidden = false;
+  $("paused").scrollIntoView({ behavior: "smooth", block: "nearest" });
 }
 const RESUMABLE = new Set(["paused", "running", "error"]);    // "running" = the page was closed mid-way
 /** A job loaded from storage that can be continued (written by this or an older version of the app). */
@@ -644,10 +742,12 @@ async function showResult(job, blob) {
   // metadata until you press play, so we don't wait for it).
   const duration = await A.mp3Duration(blob);
   $("resDuration").textContent = Number.isFinite(duration) ? formatDuration(duration) : "?";
-  $("resMeta").textContent = `${t("size")}: \u2066${fmtSize(blob.size)}\u2069 · Gemini (${job.request.mode === "conversation" ? job.request.voice + ", " + job.request.voice2 : job.request.voice})`;
+  $("resMeta").textContent = `${t("size")}: \u2066${fmtSize(blob.size)}\u2069 · \u2066Gemini (${job.request.mode === "conversation" ? job.request.voice + ", " + job.request.voice2 : job.request.voice})\u2069`;
   const safe = (job.request.title || "podcast").replace(/[^\p{L}\p{N} _-]/gu, "").trim() || "podcast";
   $("download").href = url;
   $("download").download = `${safe}.mp3`;
+  setupShare(blob, `${safe}.mp3`);
+  store.set("genDone", "1");
   $("warnings").textContent = (job.warnings || []).join(" · ");
   const lines = job.script || job.narration;
   $("showScript").hidden = !lines;
@@ -671,6 +771,29 @@ async function showResult(job, blob) {
   }
   $("result").scrollIntoView({ behavior: "smooth", block: "start" });
 }
+
+// On a phone the plain download link only opens a media viewer; the share sheet can save to Files.
+let shareFile = null;
+function setupShare(blob, name) {
+  shareFile = null; $("share").hidden = true; $("shareMsg").hidden = true;
+  $("download").classList.toggle("secondary", false);
+  try {
+    const file = new File([blob], name, { type: "audio/mpeg" });
+    if (navigator.canShare?.({ files: [file] }) && navigator.share) {
+      shareFile = file; $("share").hidden = false;
+      $("download").classList.add("secondary");
+    }
+  } catch { /* no File constructor / share support: keep the download link */ }
+}
+$("share").addEventListener("click", async () => {
+  if (!shareFile) return;
+  $("shareMsg").hidden = true;
+  try { await navigator.share({ files: [shareFile], title: shareFile.name.replace(/\.mp3$/, "") }); }
+  catch (e) {
+    if (e.name === "AbortError") return;               // the person closed the sheet
+    $("shareMsg").hidden = false; $("shareMsg").textContent = `${t("shareFail")}: ${e.message}`;
+  }
+});
 
 async function restoreLastJob() {
   const id = store.get("lastJob", "");
@@ -696,7 +819,9 @@ async function restoreLastJob() {
 }
 
 // ---------------------------------------------------------------- wiring
-function setSeg(id, v) { [...$(id).children].forEach((c) => c.classList.toggle("on", c.dataset.v === v)); }
+function setSeg(id, v) {
+  [...$(id).children].forEach((c) => { c.classList.toggle("on", c.dataset.v === v); c.setAttribute("aria-pressed", c.dataset.v === v); });
+}
 function seg(id, k, onChange) {
   $(id).addEventListener("click", (e) => {
     const b = e.target.closest("button[data-v]");
@@ -706,7 +831,7 @@ function seg(id, k, onChange) {
 }
 seg("langSeg", "lang", () => { state.langTouched = true; onTextChange(); });
 seg("modeSeg", "mode", () => { renderVoices(); updateHint(); onTextChange(); });
-seg("paceSeg", "pace");
+seg("paceSeg", "pace", updateVoiceSummary);
 seg("srcSeg", "src", () => { store.set("src", state.src); showError(""); applyUI(); });
 $("researchBtn").addEventListener("click", findSources);
 $("topic").addEventListener("keydown", (e) => { if (e.key === "Enter") { e.preventDefault(); findSources(); } });
@@ -733,6 +858,26 @@ dz.addEventListener("dragleave", () => dz.classList.remove("over"));
 dz.addEventListener("drop", (e) => { e.preventDefault(); dz.classList.remove("over"); e.dataTransfer.files[0] && loadFile(e.dataTransfer.files[0]); });
 
 $("generate").addEventListener("click", generate);
+
+// Compact estimate + free-quota status next to the sticky Create button.
+function updateGenInfo() {
+  const topic = state.src === "topic";
+  const len = topic ? $("minutesOut").textContent : $("statEst").textContent;
+  const badge = $(topic ? "topicBadge" : "freeBadge");
+  const hasText = topic ? !!state.research : $("statEst").textContent !== "0:00";
+  state.est = hasText ? len.replace(/^~/, "") : "";
+  const bits = [];
+  if (hasText) bits.push(`<bdi>${fmt(t("infoLen"), { len })}</bdi>`.replace("~~", "~"));
+  if (!badge.hidden) {
+    const cls = badge.classList.contains("bad") ? "bad" : badge.classList.contains("wait") ? "wait" : "ok";
+    bits.push(`<span class="gi-${cls}">${t({ ok: "infoFree", wait: "infoMulti", bad: "infoPaid" }[cls])}</span>`);
+  }
+  $("genInfo").innerHTML = bits.join(" · ");
+}
+{
+  const mo = new MutationObserver(updateGenInfo);
+  for (const id of ["freeBadge", "topicBadge", "statEst", "minutesOut"]) mo.observe($(id), { childList: true, characterData: true, subtree: true, attributes: true, attributeFilter: ["hidden", "class"] });
+}
 $("cancel").addEventListener("click", () => { state.cancel = true; state.gemini?.abortAll(); });   // stops requests in flight too
 $("resumeBtn").addEventListener("click", async () => {
   if (state.busy) return;
@@ -811,6 +956,7 @@ $("settingsBtn").addEventListener("click", () => {
   $("limTextRpd").placeholder = DATA.FREE_DEFAULTS.gemini_text.rpd;
   $("settings").showModal();
 });
+$("closeSettings").addEventListener("click", (e) => { e.preventDefault(); $("settings").close(); });
 $("saveSettings").addEventListener("click", () => {
   store.set("freeOnly", $("freeOnly").checked ? "1" : "0");
   store.set("billing", $("billing").checked ? "1" : "0");
@@ -819,7 +965,14 @@ $("saveSettings").addEventListener("click", () => {
   else applyUI();
 });
 
+// The voice / style / pace section starts collapsed once a voice is chosen or a podcast was made.
+{
+  const d = $("voiceDetails"), saved = store.get("voiceOpen", "");
+  d.open = saved ? saved === "1" : !(store.get("voice", "") || store.get("genDone", ""));
+  d.addEventListener("toggle", () => store.set("voiceOpen", d.open ? "1" : "0"));
+}
 applyUI();
 restoreTopicSetup();
 applyUI();
+updateGenInfo();
 restoreLastJob();
