@@ -72,7 +72,8 @@ export async function runJob(job, gemini, ui) {
   const genders = [gender[v1] || "female", gender[v2] || "male"];
   const opts = { language: req.language, style: req.style, pace: req.pace,
     hostNames: hostNames(req.language, genders[0], genders[1]), genders };
-  gemini.gate.onWait = (s) => ui.progress(null, `Staying within the free tier: waiting ${Math.round(s)}s for the per-minute limit`);
+  gemini.gate.onWait = (s, why) => ui.progress(null, why === "offline" ? "You are offline: waiting for the connection to come back"
+    : `Staying within the free tier: waiting ${Math.round(s)}s for the per-minute limit`);
   // A podcast from a topic: research the chosen focus and write the script first (saved, so resuming skips it).
   if (req.topic && !req.text) await writeTopicScript(job, gemini, ui, opts, (j) => A.store.saveJob(j));
   const text = cleanText(req.text);
@@ -154,6 +155,7 @@ export async function runJob(job, gemini, ui) {
   ui.progress(0.91, "Mastering audio (warmth EQ, loudness)");
   const meter = new A.LoudnessMeter();
   for (let i = 0; i < units.length; i++) {
+    if (ui.cancelled()) throw new Cancelled();
     const { audio, kweighted } = await A.masterPart(await A.store.getPart(job.id, i));
     meter.add(kweighted);
     await A.store.putPart(job.id, `m${i}`, audio);
@@ -164,6 +166,7 @@ export async function runJob(job, gemini, ui) {
   enc.push(pad(0.35), 1);
   let samples = pad(0.35).length;
   for (let i = 0; i < units.length; i++) {
+    if (ui.cancelled()) throw new Cancelled();
     ui.progress(0.94 + 0.05 * i / units.length, "Encoding MP3");
     const m = await A.store.getPart(job.id, `m${i}`);
     samples += m.length;

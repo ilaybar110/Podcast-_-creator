@@ -32,10 +32,11 @@ export const VOICES = [
 ].map(([id, gender, description, recommended]) => ({ id, name: id, gender, description, recommended }));
 
 export class ProviderError extends Error {
-  constructor(message, { retryable = false, retryAfter = null } = {}) {
+  constructor(message, { retryable = false, retryAfter = null, signal = null } = {}) {
     super(message);
     this.retryable = retryable;
     this.retryAfter = retryAfter;
+    this.signal = signal;     // the client's cancel signal, so a retry wait stops on Cancel
   }
 }
 
@@ -48,7 +49,32 @@ export class QuotaExhausted extends ProviderError {
 
 export class Cancelled extends Error {}
 
-export const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+/** Waits `ms`; with an AbortSignal, stops early by throwing Cancelled. */
+export function sleep(ms, signal = null) {
+  if (signal?.aborted) return Promise.reject(new Cancelled());
+  return new Promise((resolve, reject) => {
+    const done = () => { signal?.removeEventListener("abort", stop); resolve(); };
+    const stop = () => { clearTimeout(t); reject(new Cancelled()); };
+    const t = setTimeout(done, ms);
+    signal?.addEventListener("abort", stop, { once: true });
+  });
+}
+
+const isOffline = () => globalThis.navigator?.onLine === false;
+
+/** Resolves once the browser is back online (re-checks every few seconds in case the event is missed). */
+function untilOnline(signal = null) {
+  return new Promise((resolve, reject) => {
+    const finish = (fn) => () => {
+      clearInterval(poll); globalThis.removeEventListener?.("online", back); signal?.removeEventListener("abort", stop); fn();
+    };
+    const back = finish(resolve), stop = finish(() => reject(new Cancelled()));
+    const poll = setInterval(() => { if (!isOffline()) back(); }, 5000);
+    globalThis.addEventListener?.("online", back, { once: true });
+    signal?.addEventListener("abort", stop, { once: true });
+    if (signal?.aborted) stop();
+  });
+}
 
 export async function withRetries(fn, attempts = 6, base = 4000) {
   for (let i = 0; ; i++) {
@@ -56,7 +82,7 @@ export async function withRetries(fn, attempts = 6, base = 4000) {
       return await fn();
     } catch (e) {
       if (!(e instanceof ProviderError) || !e.retryable || i >= attempts - 1) throw e;
-      await sleep(Math.min(90000, e.retryAfter ? e.retryAfter * 1000 : base * 2 ** i));
+      await sleep(Math.min(90000, e.retryAfter ? e.retryAfter * 1000 : base * 2 ** i), e.signal);
     }
   }
 }
@@ -106,6 +132,12 @@ export class Ledger {
     e.used[bucket] = (e.used[bucket] || 0) + 1; this._save(d);
     this.window(kid, bucket).push([Date.now(), tokens]);
   }
+  /** Undo one record() for a request Google never received or never served (network error, timeout, 5xx). */
+  refund(kid, bucket) {
+    const d = this._load(); const e = this._entry(d, kid);
+    if (e.used[bucket] > 0) { e.used[bucket]--; this._save(d); }
+    this.window(kid, bucket).pop();
+  }
   markExhausted(kid, bucket, limit) {
     const d = this._load(); const e = this._entry(d, kid);
     if (limit) (e.learned[bucket] ||= {}).rpd = limit;
@@ -134,7 +166,7 @@ export const LEDGER = new Ledger();
 export class Gate {
   constructor(apiKey, freeOnly, overrides = {}, ledger = LEDGER) {
     this.kidP = keyId(apiKey);
-    Object.assign(this, { freeOnly, overrides, ledger, onWait: null, chain: Promise.resolve() });
+    Object.assign(this, { freeOnly, overrides, ledger, onWait: null, signal: null, chain: Promise.resolve() });
   }
   acquire(bucket, tokens) {
     // serialise acquisitions so concurrent requests can't both slip past a limit
@@ -155,10 +187,11 @@ export class Gate {
       if (q.length < lim.rpm && (q.length === 0 || toks + tokens <= lim.tpm)) break;
       const wait = 60500 - (Date.now() - q[0][0]);
       this.onWait?.(wait / 1000);
-      await sleep(Math.max(500, wait));
+      await sleep(Math.max(500, wait), this.signal);
     }
     this.ledger.record(kid, bucket, tokens);
   }
+  async refund(bucket) { this.ledger.refund(await this.kidP, bucket); }
   async quotaError(bucket, body) {
     const kid = await this.kidP;
     for (const d of body?.error?.details || []) {
@@ -211,26 +244,72 @@ function b64ToInt16(b64) {
   return new Int16Array(bytes.buffer);
 }
 
+const TIMEOUTS = { tts: 180000, text: 120000 };
+
 export class Gemini {
-  constructor(apiKey, { freeOnly = true, overrides = {}, fetchFn = (...a) => fetch(...a) } = {}) {
-    Object.assign(this, { apiKey, freeOnly, fetchFn });
-    this.gate = new Gate(apiKey, freeOnly, overrides);
+  /** `signal` (optional): aborting it cancels every request of this client, as abortAll() does. */
+  constructor(apiKey, { freeOnly = true, overrides = {}, fetchFn = (...a) => fetch(...a), ledger = LEDGER,
+    signal = null, timeouts = TIMEOUTS } = {}) {
+    Object.assign(this, { apiKey, freeOnly, fetchFn, timeouts });
+    this.gate = new Gate(apiKey, freeOnly, overrides, ledger);
     this.maxChunkChars = freeOnly ? DATA.FREE_CHUNK_CHARS : 1500;
     this.concurrency = 2;
+    this.controller = new AbortController();
+    this.signal = this.gate.signal = this.controller.signal;
+    if (signal?.aborted) this.abortAll();
+    else signal?.addEventListener("abort", () => this.abortAll(), { once: true });
+  }
+
+  /** Cancel: stops in-flight requests and waits; every later request throws Cancelled. */
+  abortAll() { this.controller.abort(); }
+
+  _error(message, opts = {}) { return new ProviderError(message, { ...opts, signal: this.signal }); }
+
+  /**
+   * fetch and read the JSON body (null if it isn't JSON), with a timeout and the cancel signal.
+   * Cancel throws Cancelled; a timeout or network failure throws a retryable ProviderError.
+   * Either way `noResponse` says whether Google never answered (so the request used no quota).
+   */
+  async _fetch(url, init, timeoutMs) {
+    if (this.signal.aborted) throw Object.assign(new Cancelled(), { noResponse: true });
+    const ctl = new AbortController();
+    const onCancel = () => ctl.abort();
+    this.signal.addEventListener("abort", onCancel, { once: true });
+    let timedOut = false, r = null;
+    const timer = setTimeout(() => { timedOut = true; ctl.abort(); }, timeoutMs);
+    try {
+      r = await this.fetchFn(url, { ...init, signal: ctl.signal });
+      let body = null;
+      try { body = await r.json(); } catch (e) { if (ctl.signal.aborted) throw e; /* not JSON */ }
+      return { r, body };
+    } catch (e) {
+      const err = this.signal.aborted ? new Cancelled()
+        : timedOut ? this._error(`Gemini did not answer within ${Math.round(timeoutMs / 1000)}s`, { retryable: true })
+          : this._error(`Network error talking to Gemini: ${e.message}`, { retryable: true });
+      err.noResponse = !r;
+      throw err;
+    } finally {
+      clearTimeout(timer);
+      this.signal.removeEventListener("abort", onCancel);
+    }
+  }
+
+  /** Offline: wait for the connection instead of spending retries on requests that can't leave the device. */
+  async _online() {
+    if (!isOffline()) return;
+    this.gate.onWait?.(0, "offline");
+    await untilOnline(this.signal);
   }
 
   async models() {
     if (modelCache.has(this.apiKey)) return modelCache.get(this.apiKey);
     let names = [], token = "";
     for (let i = 0; i < 10; i++) {
-      let r;
-      try {
-        r = await this.fetchFn(`${API}/models?pageSize=1000${token ? "&pageToken=" + token : ""}`,
-          { headers: { "x-goog-api-key": this.apiKey } });
-      } catch (e) { throw new ProviderError(`Network error talking to Gemini: ${e.message}`, { retryable: true }); }
-      if ([400, 401, 403].includes(r.status)) throw new ProviderError("Gemini rejected the API key. Check it in Settings.");
-      if (!r.ok) throw new ProviderError(`Gemini ${r.status} while listing models`, { retryable: [429, 500, 502, 503, 504].includes(r.status) });
-      const d = await r.json();
+      await this._online();
+      const { r, body: d } = await this._fetch(`${API}/models?pageSize=1000${token ? "&pageToken=" + token : ""}`,
+        { headers: { "x-goog-api-key": this.apiKey } }, this.timeouts.text);
+      if ([400, 401, 403].includes(r.status)) throw this._error("Gemini rejected the API key. Check it in Settings.");
+      if (!r.ok || !d) throw this._error(`Gemini ${r.status} while listing models`, { retryable: [429, 500, 502, 503, 504].includes(r.status) });
       names = names.concat((d.models || []).filter((m) => (m.supportedGenerationMethods || []).includes("generateContent"))
         .map((m) => m.name.split("/").slice(1).join("/")));
       token = d.nextPageToken;
@@ -266,24 +345,33 @@ export class Gemini {
 
   async generate(model, body, bucket = model.includes("tts") ? "gemini_tts" : "gemini_text") {
     const prompt = body.contents.flatMap((c) => c.parts).map((p) => p.text || "").join("");
+    await this._online();
     await this.gate.acquire(bucket, estimateTokens(prompt));
-    let r;
+    let r, data;
     try {
-      r = await this.fetchFn(`${API}/models/${model}:generateContent`, {
+      ({ r, body: data } = await this._fetch(`${API}/models/${model}:generateContent`, {
         method: "POST", headers: { "x-goog-api-key": this.apiKey, "Content-Type": "application/json" },
         body: JSON.stringify(body),
-      });
-    } catch (e) { throw new ProviderError(`Network error talking to Gemini: ${e.message}`, { retryable: true }); }
-    if (r.ok) return r.json();
-    let err = {};
-    try { err = await r.json(); } catch { /* not JSON */ }
+      }, bucket === "gemini_tts" ? this.timeouts.tts : this.timeouts.text));
+    } catch (e) {
+      // Google never received or never answered this request, so it used no quota.
+      if (e.noResponse) { await this.gate.refund(bucket); e.refunded = true; }
+      throw e;
+    }
+    if (r.ok) {
+      if (!data) throw this._error("Gemini sent an unreadable answer", { retryable: true });
+      return data;
+    }
+    const err = data || {};
+    if (r.status >= 500) await this.gate.refund(bucket);     // a server error isn't counted against the quota
     if (r.status === 429) {
       const q = await this.gate.quotaError(bucket, err);
       if (q) throw q;
     }
     const delay = (err.error?.details || []).map((d) => d.retryDelay).find(Boolean);
-    throw new ProviderError(`Gemini ${r.status}: ${err.error?.message || r.statusText}`, {
-      retryable: [429, 500, 502, 503, 504].includes(r.status), retryAfter: delay ? parseFloat(delay) : null });
+    throw Object.assign(this._error(`Gemini ${r.status}: ${err.error?.message || r.statusText}`, {
+      retryable: [429, 500, 502, 503, 504].includes(r.status), retryAfter: delay ? parseFloat(delay) : null }),
+    { refunded: r.status >= 500 });
   }
 
   async speak(prompt, speechConfig, language) {
@@ -305,7 +393,7 @@ export class Gemini {
     if (!audio.length) {
       const reason = data.candidates?.[0]?.finishReason || data.promptFeedback?.blockReason || "no audio";
       const blocked = BLOCK.has(reason);
-      throw new ProviderError(blocked ? "Gemini refused to voice this passage (content filter)" : `Gemini returned no audio (${reason})`,
+      throw this._error(blocked ? "Gemini refused to voice this passage (content filter)" : `Gemini returned no audio (${reason})`,
         { retryable: !blocked });
     }
     const rate = parseInt((audio[0].mimeType || "").match(/rate=(\d+)/)?.[1] || "24000", 10);
@@ -335,7 +423,7 @@ export class Gemini {
     const data = await this.generate(await this.textModel(), {
       contents: [{ role: "user", parts: [{ text: prompt }] }], generationConfig: { temperature: 0.9 } });
     const text = (data.candidates?.[0]?.content?.parts || []).filter((p) => !p.thought).map((p) => p.text || "").join("");
-    if (!text.trim()) throw new ProviderError("Gemini returned an empty script", { retryable: true });
+    if (!text.trim()) throw this._error("Gemini returned an empty script", { retryable: true });
     return text;
   }
 
@@ -344,12 +432,19 @@ export class Gemini {
     const model = await this.searchModel();
     if (!model) throw new ProviderError("This key has no model with free Google Search.");
     // Google also counts a search request against its model's own daily limit.
-    if (model === await this.textModel().catch(() => null)) await this.gate.acquire("gemini_text", estimateTokens(prompt));
-    const data = await this.generate(model, { contents: [{ role: "user", parts: [{ text: prompt }] }],
-      tools: [{ google_search: {} }], generationConfig: { temperature: 0.7 } }, "gemini_search");
+    const alsoText = model === await this.textModel().catch(() => null);
+    if (alsoText) await this.gate.acquire("gemini_text", estimateTokens(prompt));
+    let data;
+    try {
+      data = await this.generate(model, { contents: [{ role: "user", parts: [{ text: prompt }] }],
+        tools: [{ google_search: {} }], generationConfig: { temperature: 0.7 } }, "gemini_search");
+    } catch (e) {
+      if (alsoText && (e.refunded || (e instanceof Cancelled && e.noResponse !== false))) await this.gate.refund("gemini_text");
+      throw e;
+    }
     const cand = data.candidates?.[0] || {};
     const text = (cand.content?.parts || []).filter((p) => !p.thought).map((p) => p.text || "").join("");
-    if (!text.trim()) throw new ProviderError("Google Search research came back empty", { retryable: true });
+    if (!text.trim()) throw this._error("Google Search research came back empty", { retryable: true });
     const meta = cand.groundingMetadata || cand.grounding_metadata || {};
     const sources = (meta.groundingChunks || meta.grounding_chunks || []).map((c) => c.web).filter((w) => w?.uri)
       .map((w) => ({ title: w.title || w.domain || w.uri, url: w.uri }));

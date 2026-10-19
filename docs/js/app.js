@@ -143,7 +143,7 @@ const store = {
 };
 const state = {
   ui: store.get("ui", "he"), lang: "he", langTouched: false, mode: "narrator", style: "warm", pace: "natural",
-  voice: "Sulafat", voice2: "Achird", showAll: false, busy: false, cancel: false, job: null, free: null, t0: 0,
+  voice: "Sulafat", voice2: "Achird", showAll: false, busy: false, cancel: false, gemini: null, job: null, free: null, t0: 0,
   src: store.get("src", "text"), research: null, focus: new Set(), researching: false,
 };
 try { state.research = JSON.parse(store.get("research", "null")); } catch { /* old or corrupt */ }
@@ -534,7 +534,8 @@ async function run(job) {
     cancelled: () => state.cancel,
   };
   try {
-    const { blob } = await runJob(job, gemini(), ui);
+    state.gemini = gemini();
+    const { blob } = await runJob(job, state.gemini, ui);
     job.status = "done";
     await A.store.saveJob(job);
     await showResult(job, blob);
@@ -550,7 +551,7 @@ async function run(job) {
     await A.store.saveJob(job);
   } finally {
     clearInterval(timer);
-    state.busy = false;
+    state.busy = false; state.gemini = null;
     $("progress").hidden = true;
     keepAwake(false);
     updateHint();
@@ -655,7 +656,7 @@ dz.addEventListener("dragleave", () => dz.classList.remove("over"));
 dz.addEventListener("drop", (e) => { e.preventDefault(); dz.classList.remove("over"); e.dataTransfer.files[0] && loadFile(e.dataTransfer.files[0]); });
 
 $("generate").addEventListener("click", generate);
-$("cancel").addEventListener("click", () => { state.cancel = true; });
+$("cancel").addEventListener("click", () => { state.cancel = true; state.gemini?.abortAll(); });   // stops requests in flight too
 $("resumeBtn").addEventListener("click", () => {
   if (!state.job || state.busy) return;
   showError("");
