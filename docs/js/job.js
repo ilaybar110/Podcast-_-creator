@@ -1,6 +1,6 @@
 // Podcast generation in the browser (port of app/jobs.py + app/script_writer.py).
 import { cleanText, chunkText, splitSentences } from "./text.js";
-import { podcastScriptPrompt, parseDialogue } from "./prompts.js";
+import { podcastScriptPrompt, parseDialogue, stripTags } from "./prompts.js";
 import { Cancelled, ProviderError, QuotaExhausted, VOICES, nextReset, withRetries } from "./gemini.js";
 import * as A from "./audio.js";
 import { writeTopicScript } from "./research.js";
@@ -24,12 +24,36 @@ export function hostNames(language, g1, g2) {
   return [first, pool[0] === first ? pool[1] : pool[0]];
 }
 
+// Batch boundaries (twin of app/script_writer.py batch_turns): once a batch is ~80% full it ends
+// after a long statement; it never ends on a question or just before a short reaction, unless
+// only that keeps it under maxChars.
+const SOFT_FULL = 0.8, LONG_TURN = 60, SHORT_TURN = 25;
+const turnSize = (t) => t.text.length + t.speaker.length + 3;
+const goodEnd = (t) => { const w = stripTags(t.text); return w.length > LONG_TURN && /\.["'”’״)]*$/.test(w); };
+const badSplit = (before, after) =>
+  stripTags(before.text).replace(/["'”’״) ]+$/, "").endsWith("?") || stripTags(after.text).length < SHORT_TURN;
+
 export function batchTurns(turns, maxChars) {
   const batches = [];
   let cur = [], size = 0;
   for (const t of turns) {
-    const n = t.text.length + t.speaker.length + 3;
-    if (cur.length && size + n > maxChars) { batches.push(cur); cur = []; size = 0; }
+    const n = turnSize(t);
+    if (cur.length && size + n > maxChars) {
+      let cut = cur.length;
+      if (badSplit(cur[cur.length - 1], t)) {     // look back for a better place that still fits
+        let tail = n;
+        for (let j = cur.length - 1; j > 0; j--) {
+          tail += turnSize(cur[j]);
+          if (tail > maxChars || size - tail + n < SOFT_FULL / 2 * maxChars) break;
+          if (!badSplit(cur[j - 1], cur[j])) { cut = j; break; }
+        }
+      }
+      batches.push(cur.slice(0, cut));
+      cur = cur.slice(cut);
+      size = cur.reduce((s, x) => s + turnSize(x), 0);
+    } else if (cur.length && size >= SOFT_FULL * maxChars && goodEnd(cur[cur.length - 1]) && !badSplit(cur[cur.length - 1], t)) {
+      batches.push(cur); cur = []; size = 0;
+    }
     cur.push(t); size += n;
   }
   if (cur.length) batches.push(cur);

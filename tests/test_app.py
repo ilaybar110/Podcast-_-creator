@@ -125,6 +125,88 @@ def test_parse_dialogue():
     assert "צוחק" not in turns[1].text and turns[1].text.endswith("המשך שורה.")
 
 
+def test_parse_dialogue_keeps_only_whitelisted_sparse_tags():
+    raw = ("Noa: [Laughs] that's wild [music].\n"
+           "Yoni: [chuckles] right?\n"                # too soon after the last tag
+           "Noa: [applause] ok [sighs] fine.\n"       # not whitelisted / still too soon
+           "Yoni: so.\n"
+           "Noa: [warmly] welcome back [laughs] again.\n"   # one tag per turn
+           "Yoni: [laughs]\n")                        # a tag alone is not a turn
+    turns = script_writer.parse_dialogue(raw, ("Noa", "Yoni"))
+    assert [t.text for t in turns] == [
+        "[laughs] that's wild.", "right?", "ok fine.", "so.", "[warmly] welcome back again."]
+    assert script_writer.strip_tags(turns[-1].text) == "welcome back again."
+
+
+def _turns(*texts):
+    return [Turn("Noa" if i % 2 == 0 else "Yoni", t) for i, t in enumerate(texts)]
+
+
+def test_batch_turns_prefers_natural_boundaries():
+    long_stmt = "This is a long, complete statement that explains the idea in full detail."   # > 60 chars
+    # soft split: ~80% full and the last turn is a long statement
+    turns = _turns(*["x" * 70 + "."] * 5, long_stmt, "y" * 70 + ".", "z" * 70 + ".")
+    batches = script_writer.batch_turns(turns, 580)
+    assert all(sum(len(t.text) + len(t.speaker) + 3 for t in b) <= 580 for b in batches)
+    assert batches[0][-1].text == long_stmt
+
+    # hard max on a question / before a short reaction: back up to the previous good boundary
+    q = "And what does that actually mean for the people living there today?"
+    turns = _turns("a" * 150 + ".", "b" * 150 + ".", "c" * 100 + ".", q, "d" * 120 + ".")
+    batches = script_writer.batch_turns(turns, 500)
+    assert batches[0][-1].text.startswith("c") and batches[1][0].text == q
+    turns = _turns("a" * 150 + ".", "b" * 150 + ".", "c" * 150 + ".", "Wow, really?", "e" * 60)
+    batches = script_writer.batch_turns(turns, 500)
+    assert batches[0][-1].text.startswith("b") and [t.text for t in batches[1]][:2] == ["c" * 150 + ".", "Wow, really?"]
+
+    # nothing better fits: the hard max still wins
+    turns = _turns("a" * 300 + "?", "c" * 190 + ".")
+    assert [len(b) for b in script_writer.batch_turns(turns, 500)] == [1, 1]
+
+
+def test_web_dialogue_parsing_and_batching_match_python():
+    import json
+    import shutil
+    import subprocess
+    from pathlib import Path
+    from app import prompts
+    if not shutil.which("node"):
+        pytest.skip("node not installed")
+    root = Path(__file__).resolve().parent.parent / "docs" / "js"
+    raw = ("**Noa:** [warmly] היי [מוזיקה] וברוכים הבאים!\nYoni: [laughs] תודה (צוחק) נועה.\nהמשך [x] שורה.\n"
+           "Noa: [sighs] כן?\nYoni: " + "משפט ארוך ומלא שמסביר את הרעיון עד הסוף, בלי לקצר בכלל. " * 3 + "\n"
+           "Noa: וואו.\nYoni: [excited] " + "עוד הסבר ארוך. " * 9 + "\nNoa: [thoughtfully] רגע, למה?\nYoni: כי.")
+    hosts, gens = ["Noa", "Yoni"], ["female", "male"]
+    script = (f"Promise.all([import('{(root / 'prompts.js').as_posix()}'), import('{(root / 'job.js').as_posix()}')])"
+              ".then(([p, j]) => { const s = JSON.parse(require('fs').readFileSync(0, 'utf8'));"
+              "const turns = p.parseDialogue(s.raw, s.hosts);"
+              "process.stdout.write(JSON.stringify({ turns, batches: [120, 200, 300].map((m) => j.batchTurns(turns, m).map((b) => b.length)),"
+              "narrator: p.narratorPrompt('שלום', 'he', 'warm', 'natural', 'Noa', 'female'),"
+              "dialogue: p.dialoguePrompt('Noa: hi', 'en', 'calm', 'brisk', s.hosts, s.gens),"
+              "script: ['he', 'en'].map((l) => p.podcastScriptPrompt('SRC', l, s.hosts, 1, 2, 'tail', s.gens)) })); })")
+    out = subprocess.run(["node", "-e", script], input=json.dumps({"raw": raw, "hosts": hosts, "gens": gens}),
+                         capture_output=True, text=True, check=True)
+    web = json.loads(out.stdout)
+    turns = script_writer.parse_dialogue(raw, tuple(hosts))
+    assert web["turns"] == [{"speaker": t.speaker, "text": t.text} for t in turns]
+    assert web["batches"] == [[len(b) for b in script_writer.batch_turns(turns, m)] for m in (120, 200, 300)]
+    assert web["narrator"] == prompts.narrator_prompt("שלום", "he", "warm", "natural", "Noa", "female")
+    assert web["dialogue"] == prompts.dialogue_prompt("Noa: hi", "en", "calm", "brisk", tuple(hosts), tuple(gens))
+    assert web["script"] == [prompts.podcast_script_prompt("SRC", lang, tuple(hosts), 1, 2, "tail", tuple(gens))
+                             for lang in ("he", "en")]
+    assert "[" not in script_writer.strip_tags(" ".join(t.text for t in turns))
+
+
+def test_script_prompts_direct_the_conversation():
+    from app import prompts
+    he = prompts.podcast_script_prompt("S", "he", ("Noa", "Yoni"), 1, 1, "")
+    en = prompts.podcast_script_prompt("S", "en", ("Emma", "Jack"), 1, 1, "")
+    assert "Hebrew gender" in he and "Hebrew" not in en.replace("SOURCE", "")
+    assert "Yoni stands in for the curious listener" in he and "[laughs]" in en and "spoken words" in en
+    tts = prompts.narrator_prompt("text", "he", "warm", "natural", "Noa")
+    assert tts.rstrip().endswith("#### TRANSCRIPT\ntext") and "[laughs]" not in tts
+
+
 # ------------------------------------------------------------- gemini wire
 def test_gemini_request_and_audio_parsing(monkeypatch):
     seen = {}

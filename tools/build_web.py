@@ -22,6 +22,9 @@ def render() -> str:
     data = {
         "STYLES": prompts.STYLES, "PACES": prompts.PACES, "ACCENT": prompts.ACCENT,
         "DELIVERY": prompts.DELIVERY, "RULES": prompts.RULES,
+        "TAGS": prompts.TAGS, "TAG_EVERY": prompts.TAG_EVERY, "DIALOGUE_RULES": prompts.DIALOGUE_RULES,
+        "SAMPLE_CONTEXT": prompts.SAMPLE_CONTEXT, "CONVO_CRAFT": prompts.CONVO_CRAFT,
+        "CONVO_TAGS": prompts.CONVO_TAGS, "NARRATION_CRAFT": prompts.NARRATION_CRAFT,
         "FREE_DEFAULTS": budget.DEFAULT_LIMITS, "FREE_CHUNK_CHARS": budget.FREE_CHUNK_CHARS,
     }
     body = json.dumps(data, ensure_ascii=False, indent=1)

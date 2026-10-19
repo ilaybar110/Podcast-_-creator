@@ -4,7 +4,7 @@
 //   generation = 1 Google-Search deep dive + 1 script request per ~12 minutes of audio
 // Only the voice recording itself uses the small daily voice quota.
 import { CHARS_PER_SECOND } from "./text.js";
-import { parseDialogue } from "./prompts.js";
+import { parseDialogue, conversationCraft, stripTags, NARRATION_CRAFT } from "./prompts.js";
 import { Cancelled, ProviderError, QuotaExhausted, withRetries } from "./gemini.js";
 
 export const WORDS_PER_MINUTE = { he: 125, en: 150 };
@@ -109,7 +109,7 @@ export function topicScriptPrompt({ topic, focus, notes, language, mode, hosts, 
     : "Output ONLY the words the narrator says, as plain paragraphs (no headings, no lists).";
   return `You write ${two ? "a top-rated two-host podcast" : "a top-rated solo podcast"} known for depth and insight.
 Write ${two ? `a natural, engaging conversation between ${a} (a ${who[genders[0]]}) and ${b} (a ${who[genders[1]]})` :
-    "the narration of one warm, knowledgeable host"} in ${SPOKEN[language]}.${language === "he" ? " Use correct Hebrew gender forms." : ""}
+    "the narration of one warm, knowledgeable host"} in ${SPOKEN[language]}.${language === "he" && !two ? " Use correct Hebrew gender forms." : ""}
 
 TOPIC: ${topic}
 FOCUS (the listener chose this): ${focus.join("; ")}
@@ -119,9 +119,9 @@ Make it a HIGH-LEVEL episode, not a summary:
 - Use concrete examples, stories, names and numbers from the research. Present competing views fairly.
 - Bust a misconception or two, and give the listener insights they would not get from a quick search.
 - Use ONLY facts supported by the research notes. If something is uncertain, say so or leave it out.
-- It must sound spoken, not read: clear short sentences, ${two ? "real reactions, follow-up questions, light humour, turns of 1-4 sentences" : "rhetorical questions, a warm personal tone"}.
+- It must sound spoken, not read: clear short sentences, ${two ? "real reactions, follow-up questions, light humour" : "rhetorical questions, a warm personal tone"}.
 - No URLs, no citation marks, no stage directions, no sound effects, no markdown, no emojis.
-- Write numbers the way they are said aloud in ${LANG_NAME[language]} when it helps.
+${two ? conversationCraft(language, hosts) : NARRATION_CRAFT[language]}
 - ${position}
 - LENGTH: this part must be about ${words} words. That length matters - do not stop early.
 - Part ${part} of ${parts}.
@@ -168,7 +168,7 @@ function mergeSources(...lists) {
 }
 
 export function cleanNarration(raw) {
-  return raw.split("\n").map((l) => l.replace(/^#+\s*|[*_`]/g, "").replace(/\[\d+(?:,\s*\d+)*\]/g, "").trim())
+  return raw.split("\n").map((l) => l.replace(/^#+\s*|[*_`]/g, "").replace(/\[[^\]]*\]/g, "").replace(/\s{2,}/g, " ").trim())
     .filter((l) => l && !/^(part|חלק)\s*\d/i.test(l)).join("\n\n");
 }
 
@@ -257,6 +257,6 @@ export async function writeTopicScript(job, gemini, ui, opts, saveJob) {
   const all = job.written.flat();
   if (req.mode === "conversation") job.script = all;
   else job.narration = all;
-  req.text = all.map((t) => t.text).join("\n\n");
+  req.text = all.map((t) => stripTags(t.text)).join("\n\n");
   await saveJob(job);
 }
