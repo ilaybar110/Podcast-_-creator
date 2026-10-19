@@ -420,7 +420,8 @@ def test_make_previews_records_missing_samples_in_order(tmp_path, monkeypatch, l
     monkeypatch.setattr(make_previews, "OUT", tmp_path)
     monkeypatch.setattr(sys, "argv", ["make_previews", "--max", "3"])
     asyncio.run(make_previews.main())
-    assert json.loads((tmp_path / "manifest.json").read_text())["samples"] == ["en/Sulafat", "he/Achird", "he/Sulafat"]
-    asyncio.run(make_previews.main())          # next run continues where it stopped
-    assert len(list(tmp_path.glob("*/*.mp3"))) == 6
-    assert (tmp_path / "en" / "Achird.mp3").exists()
+    assert json.loads((tmp_path / "manifest.json").read_text())["samples"] == ["he/Achird", "he/Sulafat", "he/Vindemiatrix"]
+    monkeypatch.setattr(sys, "argv", ["make_previews", "--max", "100"])
+    asyncio.run(make_previews.main())          # next run continues where it stopped, and stops at 16
+    assert len(list(tmp_path.glob("he/*.mp3"))) == 8 and len(list(tmp_path.glob("en/*.mp3"))) == 8
+    assert not (tmp_path / "he" / "Kore.mp3").exists()     # not a recommended voice

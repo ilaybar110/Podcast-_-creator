@@ -2,7 +2,8 @@
 
 Writes docs/previews/<lang>/<Voice>.mp3 and docs/previews/manifest.json. Skips samples that
 already exist and stops after --max new ones, so a daily run leaves most of the free quota
-for making podcasts. Recommended voices are recorded first.
+for making podcasts. Only the 8 recommended voices are recorded (Hebrew first, then English);
+other voices are still recorded live when tapped.
 
     GEMINI_API_KEY=... python -m tools.make_previews --max 8
 """
@@ -30,9 +31,9 @@ LANGS = ("he", "en")
 
 
 def todo(gem: GeminiProvider) -> list[tuple[str, object]]:
-    voices = gem.voices("he")
-    ordered = [v for v in voices if v.recommended] + [v for v in voices if not v.recommended]
-    jobs = [(lang, v) for v in ordered[:8] for lang in LANGS] + [(lang, v) for v in ordered[8:] for lang in LANGS]
+    # Only the 8 recommended (warmest) voices: Hebrew first, then English - 16 samples in total.
+    recommended = [v for v in gem.voices("he") if v.recommended]
+    jobs = [(lang, v) for lang in LANGS for v in recommended]
     return [(lang, v) for lang, v in jobs if not (OUT / lang / f"{v.id}.mp3").exists()]
 
 
