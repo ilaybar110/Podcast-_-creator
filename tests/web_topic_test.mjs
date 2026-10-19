@@ -24,7 +24,7 @@ function fakeGemini({ searchFails = false } = {}) {
     },
     async writeText(prompt) {
       calls.text++;
-      if (prompt.includes("ONLY one JSON object")) return JSON.stringify({ title: "T", summary: "S", angles, notes: "wiki facts" });
+      if (prompt.includes("valid JSON object")) return JSON.stringify({ title: "T", summary: "S", angles, notes: "wiki facts" });
       if (prompt.includes("dialogue lines")) return "Noa: hello there friend\nYoni: hi, what a topic\nNoa: indeed it is";
       return "## Part 1\n" + "A warm sentence about memory [1]. ".repeat(20);
     },
@@ -36,7 +36,7 @@ let g = fakeGemini();
 const r = await R.research("human memory", "en", g, { fetchFn: wikiFetch });
 assert.equal(g.calls.search, 1); assert.equal(g.calls.text, 0);
 assert.equal(r.angles.length, 6); assert.ok(r.searched);
-assert.deepEqual(r.sources.map((s) => s.title), ["a.com", "Memory"]);
+assert.deepEqual(r.sources.map((s) => s.title), ["a.com", "a.com", "Memory"]);
 assert.ok(r.notes.includes("Wikipedia: Memory"));
 
 // no free search today -> falls back to Wikipedia + one text request
@@ -59,7 +59,7 @@ for (const mode of ["narrator", "conversation"]) {
   assert.equal(g.calls.search, 1); assert.equal(g.calls.text, 2);
   assert.ok(job.request.text.length > 100);
   assert.ok(!job.request.text.includes("[1]") && !job.request.text.includes("Part 1"));
-  assert.equal(job.sources.length, 3);
+  assert.equal(job.sources.length, 4);
   if (mode === "conversation") assert.equal(job.script.length, 6); else assert.ok(job.narration.length >= 2);
   // resume from the save made after the first part: only the second part is written again
   const mid = JSON.parse(saved.find((s) => JSON.parse(s).written?.length === 1));
@@ -67,4 +67,6 @@ for (const mode of ["narrator", "conversation"]) {
   await R.writeTopicScript(mid, g2, ui, opts, async () => {});
   assert.equal(g2.calls.search, 0); assert.equal(g2.calls.text, 1);
 }
+// Hebrew acronyms inside JSON strings are repaired locally (no new search)
+assert.equal(R.parseJson(`x {"title": "צה"ל וארה"ב", "angles": []} y`).title, "צה״ל וארה״ב");
 console.log("ok");

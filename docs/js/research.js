@@ -5,7 +5,7 @@
 // Only the voice recording itself uses the small daily voice quota.
 import { CHARS_PER_SECOND } from "./text.js";
 import { parseDialogue } from "./prompts.js";
-import { ProviderError, QuotaExhausted, withRetries } from "./gemini.js";
+import { Cancelled, ProviderError, QuotaExhausted, withRetries } from "./gemini.js";
 
 export const WORDS_PER_MINUTE = { he: 125, en: 150 };
 export const WORDS_PER_PART = 1800;               // longer scripts are written in parts
@@ -58,7 +58,8 @@ TOPIC: ${topic}
 ${searching ? "Search the web for solid, reputable and up-to-date sources on this topic (several searches, different angles)." :
     "Work from the background material below and your own reliable knowledge."}
 ${wikiBlock(wikiPages)}
-Then return ONLY one JSON object, no markdown fences:
+Then return ONLY one valid JSON object, no markdown fences (inside strings write Hebrew acronyms with ״,
+never a bare "):
 {"title": "a catchy episode title in ${L}",
  "summary": "2 sentences in ${L}: what the topic is and why it matters",
  "angles": [ {"title": "2-6 words in ${L}", "description": "one sentence in ${L}: what this focus explores"} ],
@@ -85,7 +86,8 @@ counter-arguments, common misconceptions, recent developments and what they mean
 EARLIER NOTES:
 ${notes.slice(0, NOTES_CHARS)}
 
-Return ONLY one JSON object, no markdown fences:
+Return ONLY one valid JSON object, no markdown fences (inside strings write Hebrew acronyms with ״,
+never a bare "):
 {"notes": "1200-2000 words of new, deeper research notes in English on the chosen focus",
  "outline": [ ${parts} strings - the episode's segments in order, each one sentence in English ]}`;
 }
@@ -134,13 +136,30 @@ ${notes}
 export function parseJson(raw) {
   const s = raw.indexOf("{"), e = raw.lastIndexOf("}");
   if (s < 0 || e <= s) return null;
-  try { return JSON.parse(raw.slice(s, e + 1)); } catch { return null; }
+  const body = raw.slice(s, e + 1);
+  // Hebrew acronyms (צה"ל, ארה"ב) put a bare quote inside a string: swap it for the Hebrew gershayim.
+  for (const text of [body, body.replace(/([\u0590-\u05FF])"(?=[\u0590-\u05FF])/g, "$1״")]) {
+    try { return JSON.parse(text); } catch { /* try the repaired text */ }
+  }
+  return null;
 }
+
+/** Parse the research JSON; if it is malformed, one cheap text request reformats it (no new search). */
+async function researchJson(raw, gemini) {
+  const d = parseJson(raw);
+  if (d?.angles?.length) return d;
+  const fixed = parseJson(await gemini.writeText("Rewrite the following as ONE valid JSON object with the keys title, " +
+    "summary, angles (list of {title, description}) and notes. Keep all the content and language. Output only the JSON.\n\n" + raw));
+  if (!fixed?.angles?.length) throw new ProviderError("The research came back in an unexpected format. Try again.");
+  return fixed;
+}
+const noFreeSearch = (e) => e instanceof QuotaExhausted || (e instanceof ProviderError && !e.retryable);
 
 function mergeSources(...lists) {
   const seen = new Set(), out = [];
   for (const s of lists.flat()) {
-    const k = (s.title || s.url).toLowerCase();
+    if (!/^https?:\/\//i.test(s.url || "")) continue;
+    const k = s.url;
     if (seen.has(k)) continue;
     seen.add(k); out.push({ title: s.title, url: s.url });
   }
@@ -161,25 +180,18 @@ export async function research(topic, language, gemini, { fetchFn } = {}) {
   topic = topic.trim();
   if (!topic) throw new ProviderError("Write a topic first.");
   const wiki = await wikipedia(topic, language, fetchFn);
-  let data = null, sources = [], searched = true;
+  let res = null, searched = true;
   try {
-    const r = await withRetries(async () => {
-      const res = await gemini.searchText(researchPrompt(topic, language, wiki));
-      const d = parseJson(res.text);
-      if (!d?.angles?.length) throw new ProviderError("The research came back in an unexpected format", { retryable: true });
-      return [d, res.sources];
-    }, 3);
-    [data, sources] = r;
+    res = await withRetries(() => gemini.searchText(researchPrompt(topic, language, wiki)), 3);
   } catch (e) {
     // No free Google Search today (or on this key): research from Wikipedia instead.
+    if (!noFreeSearch(e)) throw e;
     if (!wiki.length) throw e instanceof QuotaExhausted ? e : new ProviderError(`Could not find sources: ${e.message}`);
     searched = false;
-    data = await withRetries(async () => {
-      const d = parseJson(await gemini.writeText(researchPrompt(topic, language, wiki, false)));
-      if (!d?.angles?.length) throw new ProviderError("The research came back in an unexpected format", { retryable: true });
-      return d;
-    }, 3);
   }
+  const raw = res ? res.text : await withRetries(() => gemini.writeText(researchPrompt(topic, language, wiki, false)), 3);
+  const data = await researchJson(raw, gemini);
+  const sources = res ? res.sources : [];
   const angles = data.angles.filter((x) => x?.title).slice(0, 8)
     .map((x, i) => ({ id: `a${i}`, title: String(x.title), description: String(x.description || "") }));
   const notes = [String(data.notes || ""), wiki.map((p) => `[Wikipedia: ${p.title}]\n${p.text}`).join("\n\n")]
@@ -196,13 +208,16 @@ export async function writeTopicScript(job, gemini, ui, opts, saveJob) {
   const req = job.request, tp = req.topic;
   const parts = scriptParts(tp.minutes, req.language);
   const focus = tp.focus.length ? tp.focus : [tp.topic];
+  const stop = () => { if (ui.cancelled?.()) throw new Cancelled(); };
   if (!job.deep) {
+    stop();
     ui.progress(0.02, "Researching your focus in depth");
     try {
       const r = await withRetries(() => gemini.searchText(deepDivePrompt(tp.topic, focus, tp.notes, req.language, parts)), 3);
       const d = parseJson(r.text) || { notes: r.text };
       job.deep = { notes: String(d.notes || ""), outline: Array.isArray(d.outline) ? d.outline.map(String) : [], sources: r.sources };
-    } catch {
+    } catch (e) {
+      if (!noFreeSearch(e)) throw e;          // a passing network error: nothing saved, a retry searches again
       job.deep = { notes: "", outline: [], sources: [] };        // the first research is enough
       job.warnings.push("Deep-dive search was unavailable, so the script uses the first research only.");
     }
@@ -213,6 +228,7 @@ export async function writeTopicScript(job, gemini, ui, opts, saveJob) {
   const words = Math.round(tp.minutes * (WORDS_PER_MINUTE[req.language] || 140) / parts);
   job.written ||= [];
   for (let i = job.written.length; i < parts; i++) {
+    stop();
     ui.progress(0.04 + 0.2 * i / parts, `Writing the script: part ${i + 1} of ${parts}`);
     const prev = job.written.flat();
     const tail = req.mode === "conversation"

@@ -62,6 +62,7 @@ const I18N = {
     narratorTopicHint: "קריין/ית אחד/ת מגיש/ה פרק מעמיק על הנושא, בקול חם וטבעי.",
     convTopicHint: "שני מגישים משוחחים לעומק על הנושא — כמו פודקאסט אמיתי.",
     sourcesHead: "מקורות",
+    topicHintOff: "האפליקציה תחפש מקורות ב-Google ובוויקיפדיה. מצב חינמי-בלבד כבוי, ולכן ייתכן שהחיפוש יעלה כסף.",
     interruptedText: "היצירה נקטעה (הדף נסגר). החלקים שכבר הוקלטו שמורים — אפשר להמשיך מאיפה שעצרנו.",
   },
   en: {
@@ -118,6 +119,7 @@ const I18N = {
     narratorTopicHint: "One host presents an in-depth episode on the topic in a warm, natural voice.",
     convTopicHint: "Two hosts discuss the topic in depth — like a real podcast.",
     sourcesHead: "Sources",
+    topicHintOff: "The app searches Google and Wikipedia for sources. Free-only mode is OFF, so searching may cost money.",
     interruptedText: "Recording was interrupted (the page was closed). The parts already recorded are saved — continue where it stopped.",
   },
 };
@@ -145,8 +147,11 @@ const state = {
   src: store.get("src", "text"), research: null, focus: new Set(), researching: false,
 };
 try { state.research = JSON.parse(store.get("research", "null")); } catch { /* old or corrupt */ }
-if (state.research?.angles) state.focus = new Set(state.research.angles.slice(0, 2).map((x) => x.id));
-else state.research = null;
+if (state.research?.angles) {
+  state.focus = new Set(state.research.angles.slice(0, 2).map((x) => x.id));
+  state.lang = state.research.language || state.lang;
+} else state.research = null;
+const safeUrl = (u) => /^https?:\/\//i.test(u || "");
 const t = (k) => I18N[state.ui][k] ?? k;
 const fmt = (s, v) => s.replace(/\{(\w+)\}/g, (_, k) => v[k] ?? "");
 const key = () => store.get("geminiKey", "");
@@ -190,6 +195,7 @@ function applyUI() {
   $("topicCard").hidden = state.src !== "topic";
   $("textCard").hidden = state.src === "topic";
   $("minutesOut").textContent = `${$("minutes").value} ${t("minutesUnit")}`;
+  document.querySelector('[data-i18n="topicHint"]').textContent = freeOpts().freeOnly ? t("topicHint") : t("topicHintOff");
   renderResearch();
   renderVoices();
   updateHint();
@@ -322,7 +328,7 @@ function renderResearch() {
   $("sourceCount").textContent = r.sources.length;
   const list = $("sourceList");
   list.innerHTML = "";
-  for (const s of r.sources) {
+  for (const s of r.sources.filter((x) => safeUrl(x.url))) {
     const li = document.createElement("li");
     const a = document.createElement("a");
     a.href = s.url; a.target = "_blank"; a.rel = "noopener"; a.textContent = s.title;
@@ -343,7 +349,9 @@ async function findSources() {
   $("researchBtn").disabled = true;
   topicStatus(t("researching"));
   try {
-    const r = await research(topic, state.lang, gemini());
+    const g = gemini();
+    g.gate.onWait = (s) => topicStatus(`${t("researching")} (${Math.round(s)}s)`);
+    const r = await research(topic, state.lang, g);
     state.research = r;
     state.focus = new Set(r.angles.slice(0, 2).map((a) => a.id));
     store.set("research", JSON.stringify(r));
@@ -562,7 +570,7 @@ async function showResult(job, blob) {
   if (job.sources?.length) {
     const h = document.createElement("h3"); h.textContent = t("sourcesHead");
     const ol = document.createElement("ol");
-    for (const s of job.sources) {
+    for (const s of job.sources.filter((x) => safeUrl(x.url))) {
       const li = document.createElement("li"), a = document.createElement("a");
       a.href = s.url; a.target = "_blank"; a.rel = "noopener"; a.textContent = s.title;
       li.appendChild(a); ol.appendChild(li);
@@ -604,6 +612,12 @@ seg("srcSeg", "src", () => { store.set("src", state.src); showError(""); applyUI
 $("researchBtn").addEventListener("click", findSources);
 $("topic").addEventListener("keydown", (e) => { if (e.key === "Enter") { e.preventDefault(); findSources(); } });
 $("minutes").addEventListener("input", onTextChange);
+$("topic").addEventListener("input", () => {
+  // A different topic needs new sources: don't build it on the old research.
+  if (state.research && $("topic").value.trim() !== state.research.topic) {
+    state.research = null; store.set("research", "null"); topicStatus(""); renderResearch(); onTextChange();
+  }
+});
 state.voice = store.get("voice", state.voice);
 state.voice2 = store.get("voice2", state.voice2);
 

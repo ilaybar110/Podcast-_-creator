@@ -46,6 +46,8 @@ export class QuotaExhausted extends ProviderError {
   }
 }
 
+export class Cancelled extends Error {}
+
 export const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 export async function withRetries(fn, attempts = 6, base = 4000) {
@@ -340,6 +342,8 @@ export class Gemini {
   async searchText(prompt) {
     const model = await this.searchModel();
     if (!model) throw new ProviderError("This key has no model with free Google Search.");
+    // Google also counts a search request against its model's own daily limit.
+    if (model === await this.textModel().catch(() => null)) await this.gate.acquire("gemini_text", estimateTokens(prompt));
     const data = await this.generate(model, { contents: [{ role: "user", parts: [{ text: prompt }] }],
       tools: [{ google_search: {} }], generationConfig: { temperature: 0.7 } }, "gemini_search");
     const cand = data.candidates?.[0] || {};

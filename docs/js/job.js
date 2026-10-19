@@ -1,7 +1,7 @@
 // Podcast generation in the browser (port of app/jobs.py + app/script_writer.py).
 import { cleanText, chunkText, splitSentences } from "./text.js";
 import { podcastScriptPrompt, parseDialogue } from "./prompts.js";
-import { ProviderError, QuotaExhausted, VOICES, withRetries } from "./gemini.js";
+import { Cancelled, ProviderError, QuotaExhausted, VOICES, withRetries } from "./gemini.js";
 import * as A from "./audio.js";
 import { writeTopicScript } from "./research.js";
 
@@ -9,7 +9,7 @@ const MAX_TAKES = 3;
 const CHUNK_PAUSE = 0.75, TURN_GAP = 0.3;
 const TARGET_LUFS = -16;
 
-export class Cancelled extends Error {}
+export { Cancelled };
 
 export function hostNames(language, g1, g2) {
   const names = { he: { female: ["Noa", "Maya"], male: ["Yoni", "Avi"] },
@@ -72,12 +72,12 @@ export async function runJob(job, gemini, ui) {
   const genders = [gender[v1] || "female", gender[v2] || "male"];
   const opts = { language: req.language, style: req.style, pace: req.pace,
     hostNames: hostNames(req.language, genders[0], genders[1]), genders };
+  gemini.gate.onWait = (s) => ui.progress(null, `Staying within the free tier: waiting ${Math.round(s)}s for the per-minute limit`);
   // A podcast from a topic: research the chosen focus and write the script first (saved, so resuming skips it).
   if (req.topic && !req.text) await writeTopicScript(job, gemini, ui, opts, (j) => A.store.saveJob(j));
   const text = cleanText(req.text);
   if (!text) throw new ProviderError("The text is empty after cleanup.");
   job.chunkChars ||= gemini.maxChunkChars;    // fixed on first run so resumed jobs line up
-  gemini.gate.onWait = (s) => ui.progress(null, `Staying within the free tier: waiting ${Math.round(s)}s for the per-minute limit`);
 
   async function bestTake(make, txt, label) {
     let best = null, bestProblems = null;
