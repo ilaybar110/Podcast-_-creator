@@ -1,0 +1,154 @@
+<!doctype html>
+<html lang="he" dir="rtl">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Podcast Creator</title>
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22%3E%3Ctext y=%22.9em%22 font-size=%2290%22%3E🎙%3C/text%3E%3C/svg%3E">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=Heebo:wght@400;500;700;800&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+<header class="top">
+  <div class="brand">
+    <span class="logo" aria-hidden="true">🎙</span>
+    <div>
+      <h1 data-i18n="title">יוצר הפודקאסטים</h1>
+      <p class="sub" data-i18n="subtitle">כל טקסט, בכל אורך — לפודקאסט MP3 בקול אנושי וחם</p>
+    </div>
+  </div>
+  <div class="top-actions">
+    <button class="ghost" id="settingsBtn" data-i18n="settings">הגדרות</button>
+    <button class="ghost" id="uiLangBtn">English</button>
+  </div>
+</header>
+
+<main>
+  <section class="card">
+    <div class="card-head">
+      <h2><span class="step">1</span> <span data-i18n="step1">הטקסט שלך</span></h2>
+      <label class="file-btn">
+        <input type="file" id="fileInput" accept=".txt,.md,.pdf,.docx,.html,.htm,.srt,.vtt" hidden>
+        <span data-i18n="upload">העלאת קובץ</span>
+      </label>
+    </div>
+    <div id="dropZone" class="drop">
+      <textarea id="text" dir="auto" spellcheck="false"
+        data-i18n-placeholder="placeholder"
+        placeholder="הדביקו כאן טקסט באורך כלשהו — מאמר, פרק מספר, סיכום, תסריט... או גררו קובץ (TXT, PDF, Word)"></textarea>
+    </div>
+    <div class="stats">
+      <span><b id="statChars">0</b> <span data-i18n="chars">תווים</span></span>
+      <span><b id="statWords">0</b> <span data-i18n="words">מילים</span></span>
+      <span class="est"><span data-i18n="estimate">אורך משוער</span>: <b id="statEst">0:00</b></span>
+    </div>
+  </section>
+
+  <section class="card">
+    <h2><span class="step">2</span> <span data-i18n="step2">הקול</span></h2>
+
+    <div class="row">
+      <div class="field">
+        <label data-i18n="language">שפת הפודקאסט</label>
+        <div class="seg" id="langSeg">
+          <button data-v="he" class="on">עברית</button>
+          <button data-v="en">English</button>
+        </div>
+      </div>
+      <div class="field">
+        <label data-i18n="format">פורמט</label>
+        <div class="seg" id="modeSeg">
+          <button data-v="narrator" class="on" data-i18n="narrator">קריין אחד</button>
+          <button data-v="conversation" data-i18n="conversation">שיחה בין שני מגישים</button>
+        </div>
+      </div>
+      <div class="field">
+        <label data-i18n="engine">מנוע קול</label>
+        <select id="engine"></select>
+      </div>
+    </div>
+    <p class="hint" id="modeHint"></p>
+
+    <div class="field">
+      <label id="voiceLabel" data-i18n="voice">בחרו קול</label>
+      <div class="voices" id="voices"></div>
+    </div>
+    <div class="field" id="voice2Wrap" hidden>
+      <label data-i18n="voice2">קול המגיש/ה השני/ה</label>
+      <div class="voices" id="voices2"></div>
+    </div>
+
+    <div class="row">
+      <div class="field">
+        <label data-i18n="style">סגנון</label>
+        <div class="chips" id="styles"></div>
+      </div>
+      <div class="field">
+        <label data-i18n="pace">קצב</label>
+        <div class="seg" id="paceSeg">
+          <button data-v="relaxed" data-i18n="relaxed">רגוע</button>
+          <button data-v="natural" class="on" data-i18n="natural">טבעי</button>
+          <button data-v="brisk" data-i18n="brisk">מהיר</button>
+        </div>
+      </div>
+    </div>
+    <div class="row">
+      <div class="field grow">
+        <label for="title" data-i18n="ptitle">שם הפרק</label>
+        <input id="title" type="text" dir="auto" value="">
+      </div>
+      <label class="toggle">
+        <input type="checkbox" id="warm" checked>
+        <span data-i18n="warm">מאסטרינג חם — EQ, דחיסה עדינה ועוצמת שמע סטנדרטית לפודקאסט</span>
+      </label>
+    </div>
+  </section>
+
+  <section class="card center">
+    <button id="generate" class="primary" data-i18n="generate">צרו את הפודקאסט</button>
+    <div id="progress" hidden>
+      <div class="bar"><div id="barFill"></div></div>
+      <div class="progress-row">
+        <span id="stage"></span>
+        <span><b id="pct">0%</b> · <span id="elapsed">0:00</span></span>
+      </div>
+      <button class="ghost small" id="cancel" data-i18n="cancel">ביטול</button>
+    </div>
+    <div id="error" class="error" hidden></div>
+  </section>
+
+  <section class="card result" id="result" hidden>
+    <h2 data-i18n="ready">הפודקאסט מוכן</h2>
+    <div class="duration">
+      <span data-i18n="exactLength">אורך מדויק</span>
+      <b id="resDuration">0:00</b>
+    </div>
+    <div class="meta" id="resMeta"></div>
+    <audio id="player" controls preload="metadata"></audio>
+    <div class="actions">
+      <a id="download" class="primary" href="#" data-i18n="download">הורדת MP3</a>
+      <button class="ghost" id="showScript" hidden data-i18n="showScript">הצגת התסריט</button>
+    </div>
+    <div id="warnings" class="hint"></div>
+    <div id="script" class="script" hidden dir="auto"></div>
+  </section>
+</main>
+
+<dialog id="settings">
+  <form method="dialog">
+    <h2 data-i18n="settings">הגדרות</h2>
+    <p class="hint" data-i18n="keysHint">המפתחות נשמרים רק בדפדפן שלכם ונשלחים לשרת שלכם בלבד. אם השרת כבר מוגדר עם מפתחות — אפשר להשאיר ריק.</p>
+    <label>Gemini API key <a href="https://aistudio.google.com/apikey" target="_blank" rel="noopener" data-i18n="getKey">(קבלת מפתח חינם)</a></label>
+    <input id="geminiKey" type="password" dir="ltr" autocomplete="off">
+    <label>ElevenLabs API key</label>
+    <input id="elevenKey" type="password" dir="ltr" autocomplete="off">
+    <div class="actions">
+      <button class="primary" id="saveKeys" value="save" data-i18n="save">שמירה</button>
+    </div>
+  </form>
+</dialog>
+
+<script src="/static/app.js"></script>
+</body>
+</html>
