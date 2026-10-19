@@ -247,3 +247,13 @@ Output ONLY lines in exactly this format, one turn per line:
 SOURCE:
 {source}
 """
+
+
+# Sample sentence for the voice previews (used by the app and by tools/make_previews.py).
+PREVIEW_TEXT = {
+    "he": "היי, שלום לכולם וברוכים הבאים. אני ממש {glad} שאתם פה איתנו היום, "
+          "כי יש לנו נושא מרתק לדבר עליו. אז תכינו לכם כוס קפה, תתרווחו, ובואו נתחיל.",
+    "en": "Hey everyone, and welcome back. I'm really glad you're here with us today, "
+          "because we've got a fascinating story to talk about. So grab a coffee, get comfy, "
+          "and let's dive in.",
+}

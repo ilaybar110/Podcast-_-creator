@@ -254,15 +254,16 @@ def master_gain_db(measured_lufs: float, target: float = TARGET_LUFS) -> float:
     return 0.0 if measured_lufs <= -70 else min(MAX_GAIN_DB, target - measured_lufs)
 
 
-def _mp3_args(mp3_path: Path, bitrate: str, title: str | None) -> list[str]:
-    cmd = ["-ar", "44100", "-ac", "1", "-codec:a", "libmp3lame", "-b:a", bitrate]
+def _mp3_args(mp3_path: Path, bitrate: str, title: str | None, out_rate: int = 44100) -> list[str]:
+    cmd = ["-ar", str(out_rate), "-ac", "1", "-codec:a", "libmp3lame", "-b:a", bitrate]
     if title:
         cmd += ["-metadata", f"title={title}", "-metadata", "genre=Podcast"]
     return cmd + [str(mp3_path)]
 
 
 def encode_mp3_stream(pcm_source, mp3_path: Path, warm: bool = True, bitrate: str = "128k",
-                      title: str | None = None, room_tone_db: float | None = ROOM_TONE_DB) -> float:
+                      title: str | None = None, room_tone_db: float | None = ROOM_TONE_DB,
+                      out_rate: int = 44100) -> float:
     """Two-pass mastering piped straight into the encoder - no WAV size limit, constant memory.
 
     pcm_source: a list of PCM arrays, or a callable returning a fresh iterator of them (it is
@@ -282,15 +283,15 @@ def encode_mp3_stream(pcm_source, mp3_path: Path, warm: bool = True, bitrate: st
 
     af = (WARM_CHAIN + "," if warm else "") + f"volume={gain_db:.3f}dB," + LIMITER
     _feed(["ffmpeg", "-hide_banner", "-loglevel", "error", "-y", *_F32_IN, "-af", af,
-           *_mp3_args(mp3_path, bitrate, title)], chunks())
+           *_mp3_args(mp3_path, bitrate, title, out_rate)], chunks())
     return gain_db
 
 
 def encode_mp3(wav_path: Path, mp3_path: Path, warm: bool = True, bitrate: str = "128k",
-               title: str | None = None) -> None:
+               title: str | None = None, out_rate: int = 44100) -> None:
     with wave.open(str(wav_path), "rb") as w:
         rate, pcm = w.getframerate(), pcm_from_bytes(w.readframes(w.getnframes()))
-    encode_mp3_stream([resample(pcm, rate)], mp3_path, warm, bitrate, title)
+    encode_mp3_stream([resample(pcm, rate)], mp3_path, warm, bitrate, title, out_rate=out_rate)
 
 
 def probe_duration(path: Path) -> float:

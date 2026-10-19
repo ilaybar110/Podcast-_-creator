@@ -29,7 +29,13 @@ const I18N = {
     keyStep2: 'לחצו "Create API key" והעתיקו את המפתח. עדיף בפרויקט בלי חיוב (Billing) — כך אי אפשר לחייב אתכם.',
     keyStep3: "הדביקו אותו כאן. המפתח נשמר רק בטלפון שלכם ונשלח ישירות ל-Google.",
     keyChecking: "בודקים את המפתח…", keyOk: "✓ המפתח עובד. אפשר להתחיל!",
-    privacy: "הכול רץ בדפדפן שלכם. הטקסט והמפתח נשלחים רק ל-Google.",
+    privacy: "הכול רץ בדפדפן שלכם. הטקסט והמפתח נשלחים ל-Google; במצב נושא, מילות הנושא נשלחות גם ל-Wikipedia.",
+    rememberKey: "זכור את המפתח במכשיר הזה (אם כבוי, הוא נשמר רק עד סגירת הלשונית)",
+    forgetKey: "שכחו את המפתח", clearAll: "מחיקת כל הנתונים שלי",
+    keyForgotten: "המפתח נמחק מהמכשיר הזה.",
+    confirmClear: "למחוק מהמכשיר הזה את המפתח, ההגדרות, מעקב המכסה, הפודקאסטים השמורים ודוגמאות הקול? אי אפשר לשחזר.",
+    clearedAll: "כל הנתונים נמחקו מהמכשיר הזה.",
+    keyRestrictHint: "טיפ אבטחה: ב-Google AI Studio / Cloud Console הגבילו את המפתח ל-Generative Language API בלבד (ואפשר גם להגביל לדומיין של האתר הזה כ-HTTP referrer), והשאירו חיוב (Billing) כבוי.",
     resume: "המשך יצירה", freeTitle: "שמירה על מסלול חינמי",
     freeOnly: "מצב חינם בלבד: לעולם לא לעבור את המכסה החינמית (עוצר וממשיך מחר במקום לשלם)",
     billing: "בפרויקט Google של המפתח מוגדר חיוב (Billing)",
@@ -89,7 +95,13 @@ const I18N = {
     keyStep2: 'Tap "Create API key" and copy it. Prefer a project without billing — then you can\'t be charged.',
     keyStep3: "Paste it here. It is stored only on your device and sent only to Google.",
     keyChecking: "Checking the key…", keyOk: "✓ The key works. You're ready!",
-    privacy: "Everything runs in your browser. Your text and key go only to Google.",
+    privacy: "Everything runs in your browser. Your text and key go to Google; in topic mode the topic words also go to Wikipedia.",
+    rememberKey: "Remember this key on this device (if off, it is kept only until the tab is closed)",
+    forgetKey: "Forget key", clearAll: "Clear all my data",
+    keyForgotten: "The key was removed from this device.",
+    confirmClear: "Delete the key, settings, quota tracking, saved podcasts and voice samples from this device? This cannot be undone.",
+    clearedAll: "All data was removed from this device.",
+    keyRestrictHint: "Security tip: in Google AI Studio / Cloud Console restrict the key to the Generative Language API only (and optionally to this site's domain as an HTTP referrer), and keep billing off.",
     resume: "Continue", freeTitle: "Stay on the free tier",
     freeOnly: "Free-only mode: never go past the free quota (pause and continue tomorrow instead of paying)",
     billing: "The key's Google project has billing enabled",
@@ -147,6 +159,20 @@ const store = {
   get(k, d) { try { return localStorage.getItem(k) ?? d; } catch { return d; } },
   set(k, v) { try { localStorage.setItem(k, v); } catch { /* private mode */ } },
 };
+// The API key lives in localStorage (remembered) or sessionStorage (forgotten when the tab closes).
+const KEY = "geminiKey", REMEMBER = "rememberKey";
+const rememberKey = () => store.get(REMEMBER, "1") !== "0";
+function readKey() {
+  for (const area of ["sessionStorage", "localStorage"]) {
+    try { const v = globalThis[area].getItem(KEY); if (v) return v; } catch { /* storage blocked */ }
+  }
+  return "";
+}
+function writeKey(value) {
+  const [keep, drop] = rememberKey() ? ["localStorage", "sessionStorage"] : ["sessionStorage", "localStorage"];
+  try { globalThis[drop].removeItem(KEY); } catch { /* storage blocked */ }
+  try { if (value) globalThis[keep].setItem(KEY, value); else globalThis[keep].removeItem(KEY); } catch { /* storage blocked */ }
+}
 const state = {
   ui: store.get("ui", "he"), lang: "he", langTouched: false, mode: "narrator", style: "warm", pace: "natural",
   voice: "Sulafat", voice2: "Achird", showAll: false, busy: false, cancel: false, gemini: null, job: null, free: null, t0: 0,
@@ -176,7 +202,7 @@ function restoreTopicSetup() {
 const safeUrl = (u) => /^https?:\/\//i.test(u || "");
 const t = (k) => I18N[state.ui][k] ?? k;
 const fmt = (s, v) => s.replace(/\{(\w+)\}/g, (_, k) => v[k] ?? "");
-const key = () => store.get("geminiKey", "");
+const key = readKey;
 const intOrNull = (v) => { const n = parseInt(v, 10); return n > 0 ? n : null; };
 
 function freeOpts() {
@@ -199,6 +225,7 @@ function applyUI() {
   document.documentElement.lang = state.ui;
   document.documentElement.dir = state.ui === "he" ? "rtl" : "ltr";
   document.querySelectorAll("[data-i18n]").forEach((el) => { el.textContent = t(el.dataset.i18n); });
+  // innerHTML is only used for constant strings from the I18N table (never user, network or computed values).
   document.querySelectorAll("[data-i18n-html]").forEach((el) => { el.innerHTML = t(el.dataset.i18nHtml); });
   document.querySelectorAll("[data-i18n-placeholder]").forEach((el) => { el.placeholder = t(el.dataset.i18nPlaceholder); });
   $("uiLangBtn").textContent = state.ui === "he" ? "English" : "עברית";
@@ -266,12 +293,24 @@ function updateHint() {
   $("generate").disabled = state.busy;
 }
 
+/** Turns a string with constant <b>…</b> markup into DOM nodes; everything else becomes plain text. */
+function richNodes(str) {
+  return str.split(/(<b>.*?<\/b>)/).filter(Boolean).map((part) => {
+    const m = part.match(/^<b>(.*)<\/b>$/);
+    if (!m) return document.createTextNode(part);
+    const b = document.createElement("b");
+    b.textContent = m[1];
+    return b;
+  });
+}
+
 function renderFree(f) {
   const el = $(state.src === "topic" ? "topicBadge" : "freeBadge");
   $(state.src === "topic" ? "freeBadge" : "topicBadge").hidden = true;
   state.free = f;
   if (!f) { el.hidden = true; return; }
   const tts = f.buckets.gemini_tts, txt = f.buckets.gemini_text, web = f.buckets.gemini_search;
+  // `html` is a template from the I18N table with {placeholders} filled in by richNodes (no innerHTML).
   let cls = "ok", html;
   if (f.status === "paid") { cls = "bad"; html = t("fPaid"); }
   else if (f.status === "free_multi_day") { cls = "wait"; html = fmt(t("fMulti"), { days: f.days, reset: resetTime(f.reset_at) }); }
@@ -283,7 +322,12 @@ function renderFree(f) {
   if (tts.reserve) sub.push(fmt(t("fReserve"), { reserve: tts.reserve }));
   if (tts.minutes_at_least >= 1) sub.push(fmt(t("fMinutes"), { rpm: tts.per_minute, min: Math.ceil(tts.minutes_at_least) }));
   el.className = "free-badge " + cls;
-  el.innerHTML = html + (sub.length ? `<div class="sub">${sub.join(" ")}</div>` : "");
+  el.replaceChildren(...richNodes(html));
+  if (sub.length) {
+    const d = document.createElement("div");
+    d.className = "sub"; d.textContent = sub.join(" ");
+    el.appendChild(d);
+  }
   el.hidden = false;
 }
 
@@ -443,11 +487,11 @@ function preview(v, btn) {
   resetPlayButtons();
   showError("");
   if (wasPlaying) return;                                  // second tap = stop
-  if (!key()) return showError(t("needKey"));
-  if (freeOpts().billing && freeOpts().freeOnly) return showError(t("paidBlocked"));
-  if (readySamples.has(`${state.lang}/${v.id}`)) {
+  if (readySamples.has(`${state.lang}/${v.id}`)) {   // shipped sample: no key, no quota
     return playPreview(`previews/${state.lang}/${v.id}.mp3`, btn).catch((e) => showError(`${t("previewFail")}: ${e.message}`));
   }
+  if (!key()) return showError(t("needKey"));
+  if (freeOpts().billing && freeOpts().freeOnly) return showError(t("paidBlocked"));
   const ck = [v.id, state.lang, state.style, state.pace].join("|");
   const cached = previewCache.get(ck);
   if (cached) return playPreview(cached, btn).catch((e) => showError(`${t("previewFail")}: ${e.message}`));
@@ -710,7 +754,7 @@ $("uiLangBtn").addEventListener("click", () => { state.ui = state.ui === "he" ? 
 
 async function saveKey(value) {
   value = value.trim();
-  store.set("geminiKey", value);
+  writeKey(value);
   if (!value) { applyUI(); return; }
   $("keyMsg").textContent = t("keyChecking");
   try {
@@ -723,7 +767,41 @@ async function saveKey(value) {
 }
 $("keySave").addEventListener("click", () => saveKey($("keyInput").value));
 
+const LOCAL_KEYS = ["geminiKey", "rememberKey", "ui", "src", "research", "topicSetup", "voice", "voice2", "lastJob",
+  "freeOnly", "billing", "limTtsRpd", "limTtsRpm", "limTextRpd", "podcastUsage"];
+$("rememberKey").addEventListener("change", () => {
+  store.set(REMEMBER, $("rememberKey").checked ? "1" : "0");
+  writeKey(key());                                     // move the current key to the chosen storage
+});
+$("forgetKey").addEventListener("click", () => {
+  writeKey("");
+  $("geminiKey").value = "";
+  $("keyInput").value = "";
+  $("settingsMsg").textContent = t("keyForgotten");
+  applyUI();
+});
+$("clearAll").addEventListener("click", async () => {
+  if (!confirm(t("confirmClear"))) return;
+  for (const k of LOCAL_KEYS) { try { localStorage.removeItem(k); } catch { /* blocked */ } }
+  try { sessionStorage.removeItem(KEY); } catch { /* blocked */ }
+  for (const url of previewCache.values()) { try { URL.revokeObjectURL(url); } catch { /* ignore */ } }
+  previewCache.clear();
+  try {                                                // jobs, parts and saved preview audio
+    await new Promise((resolve) => {
+      const req = indexedDB.deleteDatabase("podcast-creator");
+      req.onsuccess = req.onerror = req.onblocked = () => resolve();
+    });
+  } catch { /* IndexedDB unavailable */ }
+  state.job = null;
+  $("geminiKey").value = "";
+  $("settingsMsg").textContent = t("clearedAll");
+  $("result").hidden = true;
+  applyUI();
+});
+
 $("settingsBtn").addEventListener("click", () => {
+  $("settingsMsg").textContent = "";
+  $("rememberKey").checked = rememberKey();
   $("geminiKey").value = key();
   $("freeOnly").checked = store.get("freeOnly", "1") === "1";
   $("billing").checked = store.get("billing", "0") === "1";

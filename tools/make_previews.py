@@ -22,30 +22,46 @@ sys.path.insert(0, str(ROOT))
 from app import audio  # noqa: E402
 from app.budget import QuotaExhausted  # noqa: E402
 from app.jobs import host_names  # noqa: E402
-from app.main import PREVIEW_TEXT  # noqa: E402
+from app.prompts import PREVIEW_TEXT  # noqa: E402
 from app.providers import ProviderError, SynthesisOptions, with_retries  # noqa: E402
 from app.providers.gemini import GeminiProvider  # noqa: E402
 
 OUT = ROOT / "docs" / "previews"
 LANGS = ("he", "en")
+# New samples are small: 24 kHz mono at 40 kbps (speech only; ~20 KB for a 4 s clip).
+SAMPLE_RATE = 24000
+BITRATE = "40k"
+
+
+def wanted(voices) -> list[tuple[str, object]]:
+    """Every sample the site should ship: the recommended voices, Hebrew first, then English (8 x 2)."""
+    recommended = [v for v in voices if v.recommended]
+    return [(lang, v) for lang in LANGS for v in recommended]
+
+
+def missing(voices, out: Path) -> list[tuple[str, object]]:
+    """Wanted samples that do not exist yet, in recording order. Existing files are never re-recorded."""
+    return [(lang, v) for lang, v in wanted(voices) if not (out / lang / f"{v.id}.mp3").exists()]
 
 
 def todo(gem: GeminiProvider) -> list[tuple[str, object]]:
-    # Only the 8 recommended (warmest) voices: Hebrew first, then English - 16 samples in total.
-    recommended = [v for v in gem.voices("he") if v.recommended]
-    jobs = [(lang, v) for lang in LANGS for v in recommended]
-    return [(lang, v) for lang, v in jobs if not (OUT / lang / f"{v.id}.mp3").exists()]
+    return missing(gem.voices("he"), OUT)
+
+
+def manifest_for(out: Path) -> dict:
+    files = sorted(f"{p.parent.name}/{p.stem}" for p in out.glob("*/*.mp3"))
+    return {"style": "warm", "pace": "natural", "samples": files}
 
 
 def write_manifest() -> None:
-    files = sorted(f"{p.parent.name}/{p.stem}" for p in OUT.glob("*/*.mp3"))
-    (OUT / "manifest.json").write_text(json.dumps({"style": "warm", "pace": "natural", "samples": files},
-                                                  indent=1) + "\n", encoding="utf-8")
+    (OUT / "manifest.json").write_text(json.dumps(manifest_for(OUT), indent=1) + "\n", encoding="utf-8")
 
 
 async def main() -> int:
     ap = argparse.ArgumentParser()
-    ap.add_argument("--max", type=int, default=5, help="new samples per run (each uses one free request)")
+    ap.add_argument("--max", type=int, default=5,
+                    help="new samples per run (each uses one free TTS request of the repository key; the "
+                         "free tier allows about 10 a day, so 5 leaves room for retries)")
     args = ap.parse_args()
     gem = GeminiProvider(free_only=True)
     if not gem.available():
@@ -71,7 +87,7 @@ async def main() -> int:
         with tempfile.TemporaryDirectory() as tmp:
             wav = Path(tmp) / "s.wav"
             audio.write_wav(wav, audio.trim_silence(pcm))
-            audio.encode_mp3(wav, OUT / lang / f"{v.id}.mp3", warm=True, bitrate="64k")
+            audio.encode_mp3(wav, OUT / lang / f"{v.id}.mp3", warm=True, bitrate=BITRATE, out_rate=SAMPLE_RATE)
         made += 1
         print(f"  recorded {lang}/{v.id}")
     write_manifest()

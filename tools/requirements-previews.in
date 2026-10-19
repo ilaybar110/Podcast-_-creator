@@ -1,0 +1,5 @@
+# Direct dependencies of tools/make_previews.py (the rest of requirements.txt is not needed there).
+# Regenerate the pinned, checksummed file with:
+#   uv pip compile --generate-hashes --python-version 3.12 tools/requirements-previews.in -o tools/requirements-previews.txt
+numpy==2.5.3
+httpx==0.28.1

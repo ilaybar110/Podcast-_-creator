@@ -28,13 +28,7 @@ MAX_UPLOAD_MB = int(os.getenv("MAX_UPLOAD_MB", "50"))
 app = FastAPI(title="Podcast Creator")
 app.mount("/static", StaticFiles(directory=STATIC), name="static")
 
-PREVIEW_TEXT = {
-    "he": "היי, שלום לכולם וברוכים הבאים. אני ממש {glad} שאתם פה איתנו היום, "
-          "כי יש לנו נושא מרתק לדבר עליו. אז תכינו לכם כוס קפה, תתרווחו, ובואו נתחיל.",
-    "en": "Hey everyone, and welcome back. I'm really glad you're here with us today, "
-          "because we've got a fascinating story to talk about. So grab a coffee, get comfy, "
-          "and let's dive in.",
-}
+PREVIEW_TEXT = prompts.PREVIEW_TEXT      # lives in prompts.py so tools/make_previews.py needs no web framework
 PREVIEW_DIR = Path(os.getenv("DATA_DIR", Path(__file__).resolve().parent.parent / "data")) / "previews"
 BILLING_MSG = ("Your Gemini key has billing enabled, so every request would be charged. Turn off "
                "free-only mode in Settings to allow paid use, or use a key from a project without billing.")

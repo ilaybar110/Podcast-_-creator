@@ -2,12 +2,13 @@
 <html lang="he" dir="rtl">
 <head>
   <meta charset="utf-8">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; worker-src 'self' blob:; connect-src 'self' https://generativelanguage.googleapis.com https://*.wikipedia.org; style-src 'self'; font-src 'self'; img-src 'self' data: blob:; media-src 'self' blob:; object-src 'none'; base-uri 'none'; form-action 'none'">
+  <meta name="referrer" content="no-referrer">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="description" content="Turn any text into a warm, human-sounding Hebrew or English podcast MP3 - free.">
   <title>Podcast Creator</title>
   <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22%3E%3Ctext y=%22.9em%22 font-size=%2290%22%3E🎙%3C/text%3E%3C/svg%3E">
-  <link rel="preconnect" href="https://fonts.googleapis.com">
-  <link href="https://fonts.googleapis.com/css2?family=Heebo:wght@400;500;700;800&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="fonts/fonts.css">
   <link rel="stylesheet" href="style.css">
 </head>
 <body>
@@ -177,7 +178,7 @@
 </main>
 
 <footer class="foot">
-  <span data-i18n="privacy">הכול רץ בדפדפן שלכם. הטקסט והמפתח נשלחים רק ל-Google.</span>
+  <span data-i18n="privacy">הכול רץ בדפדפן שלכם. הטקסט והמפתח נשלחים ל-Google; במצב נושא, מילות הנושא נשלחות גם ל-Wikipedia.</span>
   · <a href="https://github.com/ilaybar110/Podcast-_-creator" target="_blank" rel="noopener">GitHub</a>
   · MP3: <a href="vendor/lamejs-LICENSE.txt">lamejs (LGPL)</a>
 </footer>
@@ -187,6 +188,13 @@
     <h2 data-i18n="settings">הגדרות</h2>
     <label>Gemini API key <a href="https://aistudio.google.com/apikey" target="_blank" rel="noopener" data-i18n="getKey">(קבלת מפתח חינם)</a></label>
     <input id="geminiKey" type="password" dir="ltr" autocomplete="off">
+    <label class="check"><input type="checkbox" id="rememberKey" checked> <span data-i18n="rememberKey"></span></label>
+    <p class="hint" data-i18n="keyRestrictHint"></p>
+    <div class="actions">
+      <button type="button" class="ghost small" id="forgetKey" data-i18n="forgetKey"></button>
+      <button type="button" class="ghost small" id="clearAll" data-i18n="clearAll"></button>
+    </div>
+    <p class="hint" id="settingsMsg" role="status"></p>
     <h3 data-i18n="freeTitle">שמירה על מסלול חינמי</h3>
     <label class="check"><input type="checkbox" id="freeOnly" checked> <span data-i18n="freeOnly"></span></label>
     <label class="check"><input type="checkbox" id="billing"> <span data-i18n="billing"></span></label>
