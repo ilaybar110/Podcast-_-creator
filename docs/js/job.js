@@ -1,13 +1,13 @@
 // Podcast generation in the browser (port of app/jobs.py + app/script_writer.py).
-import { cleanText, chunkText, splitSentences } from "./text.js";
+import { cleanText, chunkText, chunkTextWithBreaks, breakPauses, BREAK_PAUSE_SEC, turnGapSec, splitSentences } from "./text.js";
 import { podcastScriptPrompt, parseDialogue } from "./prompts.js";
 import { Cancelled, ProviderError, QuotaExhausted, VOICES, withRetries } from "./gemini.js";
 import * as A from "./audio.js";
 import { writeTopicScript } from "./research.js";
 
 const MAX_TAKES = 3;
-const CHUNK_PAUSE = 0.75, TURN_GAP = 0.3;
 const TARGET_LUFS = -16;
+const LEAD_IN_SEC = 0.35, TAIL_SEC = 0.6;
 
 export { Cancelled };
 
@@ -93,7 +93,7 @@ export async function runJob(job, gemini, ui) {
     return [best, bestProblems];
   }
 
-  let done = 0, units = [], gap = CHUNK_PAUSE;
+  let done = 0, units = [], pauses = [];    // pauses[i]: silence after part i
   const tick = (start, span) => { done++; ui.progress(start + span * done / units.length, `Recording voice: part ${done} of ${units.length}`); };
 
   async function record(i, makeAudio, start, span) {
@@ -124,26 +124,29 @@ export async function runJob(job, gemini, ui) {
     }
     const voices = { [opts.hostNames[0]]: v1, [opts.hostNames[1]]: v2 };
     units = batchTurns(job.script, job.chunkChars);
-    gap = TURN_GAP + 0.1;
+    pauses = units.map((b, i) => (i < units.length - 1 ? turnGapSec(b[b.length - 1], units[i + 1][0]) : TAIL_SEC));
     const speak = async (batch, label) => {
       const txt = batch.map((t) => t.text).join(" ");
       const [pcm, problems] = await bestTake(() => gemini.synthesizeDialogue(batch, voices, opts), txt, label);
       if (!truncated(problems)) return pcm;
       if (batch.length < 2) throw neverTruncated(label);
       const [a, b] = halves(batch);
-      return joinPcm([await speak(a, label), await speak(b, label)], TURN_GAP);
+      return joinPcm([await speak(a, label), await speak(b, label)], turnGapSec(a[a.length - 1], b[0]));
     };
     await pool(units, gemini.concurrency, (i, batch) => record(i, () => speak(batch, `Part ${i + 1}`), 0.28, 0.62),
       ui.cancelled);
   } else {
-    units = chunkText(text, job.chunkChars);
+    const { chunks, breaks } = chunkTextWithBreaks(text, job.chunkChars);
+    units = chunks;
+    pauses = breakPauses(breaks, TAIL_SEC);
     const speak = async (txt, label, depth = 0) => {
       const [pcm, problems] = await bestTake(() => gemini.synthesize(txt, v1, opts), txt, label);
       if (!truncated(problems)) return pcm;
       const sentences = splitSentences(txt);
       if (depth >= 3 || sentences.length < 2) throw neverTruncated(label);
       const [a, b] = halves(sentences);      // shorter requests are cut off far less often
-      return joinPcm([await speak(a.join(" "), label, depth + 1), await speak(b.join(" "), label, depth + 1)], 0.35);
+      return joinPcm([await speak(a.join(" "), label, depth + 1), await speak(b.join(" "), label, depth + 1)],
+        BREAK_PAUSE_SEC.sentence);
     };
     await pool(units, gemini.concurrency, (i, paras) => record(i, () => speak(paras.join("\n\n"), `Part ${i + 1}`),
       req.topic ? 0.25 : 0.02, req.topic ? 0.65 : 0.88),
@@ -152,23 +155,31 @@ export async function runJob(job, gemini, ui) {
 
   // ------------------------------------------------------------- mastering
   ui.progress(0.91, "Mastering audio (warmth EQ, loudness)");
-  const meter = new A.LoudnessMeter();
+  // Pass 1: master each part and measure its gated, K-weighted loudness.
+  const meters = [];
   for (let i = 0; i < units.length; i++) {
     const { audio, kweighted } = await A.masterPart(await A.store.getPart(job.id, i));
-    meter.add(kweighted);
+    const m = new A.LoudnessMeter();
+    m.add(kweighted);
+    meters.push(m);
     await A.store.putPart(job.id, `m${i}`, audio);
   }
+  // Nudge each part toward the episode median (+-3 dB), then one linear gain to the target.
+  const partDb = A.matchPartGains(meters.map((m) => m.integratedDb()));
+  const meter = new A.LoudnessMeter();
+  meters.forEach((m, i) => meter.merge(m, partDb[i]));
   const gain = Math.min(4, 10 ** ((TARGET_LUFS - meter.integratedDb()) / 20));
+  // Pass 2: gain, room tone and the look-ahead peak limiter happen in the encoder worker.
   const enc = A.startEncoder(96);
   const pad = (sec) => new Float32Array(Math.floor(A.SAMPLE_RATE * sec));
-  enc.push(pad(0.35), 1);
-  let samples = pad(0.35).length;
+  enc.push(pad(LEAD_IN_SEC), 1);
+  let samples = pad(LEAD_IN_SEC).length;
   for (let i = 0; i < units.length; i++) {
     ui.progress(0.94 + 0.05 * i / units.length, "Encoding MP3");
     const m = await A.store.getPart(job.id, `m${i}`);
     samples += m.length;
-    enc.push(m, gain);
-    const p = pad(i < units.length - 1 ? gap : 0.6);
+    enc.push(m, gain * A.dbToGain(partDb[i]));
+    const p = pad(pauses[i] ?? TAIL_SEC);
     samples += p.length;
     enc.push(p, 1);
   }
