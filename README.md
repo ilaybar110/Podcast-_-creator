@@ -52,7 +52,7 @@ is live at <https://ilaybar110.github.io/Podcast-_-creator/>.
 In the GitHub Pages app, choose **From a topic**, write a subject and tap **Find sources**.
 The app searches Google (Grounding with Google Search) and Wikipedia, then shows a short
 summary, the sources it found and about six directions the episode could focus on. Pick
-one or more (or write your own), set the length with the slider (2-30 minutes) and create it.
+one or more (or write your own), set the length with the slider (2 minutes to 1 hour) and create it.
 The script is written as an in-depth episode, not a summary: it explains why and how, uses
 examples and numbers from the sources, and presents competing views. You get one narrator
 or two hosts, as usual.

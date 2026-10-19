@@ -89,11 +89,11 @@ ${notes.slice(0, NOTES_CHARS)}
 
 Return ONLY one valid JSON object, no markdown fences (inside strings write Hebrew acronyms with ״,
 never a bare "):
-{"notes": "1200-2000 words of new, deeper research notes in English on the chosen focus",
+{"notes": "${Math.min(3500, 1000 + 500 * parts)}-${Math.min(4500, 1600 + 600 * parts)} words of new, deeper research notes in English on the chosen focus",
  "outline": [ ${parts} strings - the episode's segments in order, each one sentence in English ]}`;
 }
 
-export function topicScriptPrompt({ topic, focus, notes, language, mode, hosts, genders, words, part, parts, segment, tail }) {
+export function topicScriptPrompt({ topic, focus, notes, language, mode, hosts, genders, words, part, parts, segment, covered = [], tail }) {
   const [a, b] = hosts;
   const who = { female: "woman", male: "man" };
   const two = mode === "conversation";
@@ -113,7 +113,7 @@ Write ${two ? `a natural, engaging conversation between ${a} (a ${who[genders[0]
 
 TOPIC: ${topic}
 FOCUS (the listener chose this): ${focus.join("; ")}
-${segment ? `THIS PART COVERS: ${segment}\n` : ""}
+${segment ? `THIS PART COVERS: ${segment}\n` : ""}${covered.length ? `EARLIER PARTS ALREADY COVERED (do not repeat them): ${covered.join(" | ")}\n` : ""}
 Make it a HIGH-LEVEL episode, not a summary:
 - Explain the why and the how, not just the what. Connect ideas, causes and consequences.
 - Use concrete examples, stories, names and numbers from the research. Present competing views fairly.
@@ -236,7 +236,8 @@ export async function writeTopicScript(job, gemini, ui, opts, saveJob) {
       ? prev.slice(-6).map((t) => `${t.speaker}: ${t.text}`).join("\n")
       : prev.slice(-2).map((t) => t.text).join("\n");
     const prompt = topicScriptPrompt({ topic: tp.topic, focus, notes, language: req.language, mode: req.mode,
-      hosts: opts.hostNames, genders: opts.genders, words, part: i + 1, parts, segment: job.deep.outline[i] || "", tail });
+      hosts: opts.hostNames, genders: opts.genders, words, part: i + 1, parts, segment: job.deep.outline[i] || "",
+      covered: job.deep.outline.slice(0, i), tail });
     const piece = await withRetries(async () => {
       const raw = await gemini.writeText(prompt);
       if (req.mode === "conversation") {
