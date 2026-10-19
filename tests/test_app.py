@@ -438,12 +438,20 @@ def test_web_topic_research_and_script():
     assert out.returncode == 0, out.stderr
 
 
-def test_web_gemini_refunds_timeouts_and_cancel():
+def _run_node_test(name):
     import shutil
     import subprocess
     from pathlib import Path
     if not shutil.which("node"):
         pytest.skip("node not installed")
-    test = Path(__file__).resolve().parent / "web_gemini_test.mjs"
+    test = Path(__file__).resolve().parent / name
     out = subprocess.run(["node", str(test)], capture_output=True, text=True)
     assert out.returncode == 0, out.stderr
+
+
+def test_web_gemini_refunds_timeouts_and_cancel():
+    _run_node_test("web_gemini_test.mjs")
+
+
+def test_web_job_retakes_quota_and_resume():
+    _run_node_test("web_job_test.mjs")

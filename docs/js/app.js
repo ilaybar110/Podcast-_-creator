@@ -64,6 +64,9 @@ const I18N = {
     sourcesHead: "מקורות",
     topicHintOff: "האפליקציה תחפש מקורות ב-Google ובוויקיפדיה. מצב חינמי-בלבד כבוי, ולכן ייתכן שהחיפוש יעלה כסף.",
     interruptedText: "היצירה נקטעה (הדף נסגר). החלקים שכבר הוקלטו שמורים — אפשר להמשיך מאיפה שעצרנו.",
+    cantResume: "אי אפשר להמשיך את היצירה הזו — צרו את הפודקאסט מחדש.",
+    errorText: "היצירה נעצרה בגלל שגיאה: {error} החלקים שכבר הוקלטו שמורים — אפשר לנסות להמשיך מאיפה שעצרנו.",
+    noStorage: "הדפדפן לא מאפשר שמירה במכשיר (אולי גלישה פרטית), אז היצירה תרוץ בזיכרון בלבד: אי אפשר יהיה לעצור ולהמשיך אחר כך. השאירו את הדף פתוח עד הסוף.",
   },
   en: {
     title: "Podcast Creator", subtitle: "Any text, any length — into a warm, human-sounding podcast MP3",
@@ -121,6 +124,9 @@ const I18N = {
     sourcesHead: "Sources",
     topicHintOff: "The app searches Google and Wikipedia for sources. Free-only mode is OFF, so searching may cost money.",
     interruptedText: "Recording was interrupted (the page was closed). The parts already recorded are saved — continue where it stopped.",
+    cantResume: "This podcast can't be continued — please create it again.",
+    errorText: "Recording stopped because of an error: {error} The parts already recorded are saved — you can try to continue where it stopped.",
+    noStorage: "This browser doesn't allow saving on the device (private browsing?), so the podcast is made in memory only: it can't be paused and continued later. Keep this page open until it's done.",
   },
 };
 const DESC_HE = {
@@ -514,9 +520,16 @@ async function generate() {
     request: { text, topic, language: state.lang, mode: state.mode, voice: state.voice, voice2: state.voice2,
       style: state.style, pace: state.pace, title: $("title").value || t("defaultTitle") },
   };
-  await A.store.saveJob(job);
-  store.set("lastJob", job.id);
+  try {
+    await A.store.saveJob(job);
+  } catch {
+    // No IndexedDB (private mode, blocked storage): make the podcast in memory instead.
+    A.store.useMemory();
+    await A.store.saveJob(job);
+  }
+  if (A.store.persistent) store.set("lastJob", job.id);
   run(job);
+  if (!A.store.persistent) showError(t("noStorage"));
 }
 
 async function run(job) {
@@ -546,9 +559,11 @@ async function run(job) {
     } else if (e instanceof Cancelled) {
       job.status = "cancelled"; showError(t("cancelled"));
     } else {
-      job.status = "error"; showError(e.message || String(e));
+      // Recorded parts are kept, so a failed job can be continued like a paused one.
+      job.status = "error"; job.error = e.message || String(e);
+      showPaused(job);
     }
-    await A.store.saveJob(job);
+    await A.store.saveJob(job).catch(() => {});
   } finally {
     clearInterval(timer);
     state.busy = false; state.gemini = null;
@@ -560,9 +575,18 @@ async function run(job) {
 }
 
 function showPaused(job) {
-  $("pausedText").textContent = job.status === "paused"
-    ? fmt(t("pausedText"), { reset: resetTime(job.resumeAt) }) : t("interruptedText");
+  $("pausedText").textContent = job.status === "paused" ? fmt(t("pausedText"), { reset: resetTime(job.resumeAt) })
+    : job.status === "error" ? fmt(t("errorText"), { error: job.error || "?" }) : t("interruptedText");
   $("paused").hidden = false;
+}
+const RESUMABLE = new Set(["paused", "running", "error"]);    // "running" = the page was closed mid-way
+/** A job loaded from storage that can be continued (written by this or an older version of the app). */
+function resumableJob(job) {
+  const r = job?.request;
+  return !!(job && typeof job.id === "string" && RESUMABLE.has(job.status) && r && typeof r === "object" &&
+    (typeof r.text === "string" || r.topic) && ["he", "en"].includes(r.language) &&
+    ["narrator", "conversation"].includes(r.mode) && typeof r.voice === "string" &&
+    (job.script == null || Array.isArray(job.script)) && Array.isArray(job.warnings ||= []));
 }
 
 async function showResult(job, blob) {
@@ -604,14 +628,21 @@ async function showResult(job, blob) {
 
 async function restoreLastJob() {
   const id = store.get("lastJob", "");
-  if (!id) return;
   try {
-    const job = await A.store.loadJob(id);
-    if (!job) return;
-    state.job = job;
-    if (job.status === "paused" || job.status === "running") {   // "running" = the page was closed mid-way
-      showPaused(job);
-    } else if (job.status === "done") {
+    const job = id ? await A.store.loadJob(id) : null;
+    const resumable = resumableJob(job) ? job : null;
+    let finished = job?.status === "done" ? job : null;
+    if (!finished) {        // the newest finished podcast (ids start with the creation time)
+      const done = (await A.store.allJobs()).filter((j) => j.status === "done" && typeof j.id === "string");
+      finished = done.sort((a, b) => (a.id.length - b.id.length) || (a.id < b.id ? -1 : 1)).pop() || null;
+    }
+    // Free space: keep only the parts of a job that can be continued, and the latest MP3.
+    await A.store.cleanup({ resumable: resumable?.id, finished: finished?.id }).catch(() => {});
+    if (resumable) {
+      state.job = resumable;
+      showPaused(resumable);
+    } else if (job?.status === "done") {
+      state.job = job;
       const blob = await A.store.getPart(job.id, "mp3");
       if (blob) await showResult(job, blob);
     }
@@ -657,11 +688,17 @@ dz.addEventListener("drop", (e) => { e.preventDefault(); dz.classList.remove("ov
 
 $("generate").addEventListener("click", generate);
 $("cancel").addEventListener("click", () => { state.cancel = true; state.gemini?.abortAll(); });   // stops requests in flight too
-$("resumeBtn").addEventListener("click", () => {
-  if (!state.job || state.busy) return;
+$("resumeBtn").addEventListener("click", async () => {
+  if (state.busy) return;
   showError("");
-  state.job.status = "running";
-  run(state.job);
+  // Continue from what is saved on the device (works after a reload too), not from memory.
+  const id = state.job?.id || store.get("lastJob", "");
+  let job = null;
+  try { job = A.store.persistent && id ? await A.store.loadJob(id) : null; } catch { /* storage unavailable */ }
+  if (!job && state.job?.id === id) job = state.job;            // in-memory job (no IndexedDB)
+  if (!resumableJob(job)) { $("paused").hidden = true; return showError(t("cantResume")); }
+  job.status = "running"; delete job.error;
+  run(job);
 });
 $("showScript").addEventListener("click", () => {
   $("script").hidden = !$("script").hidden;

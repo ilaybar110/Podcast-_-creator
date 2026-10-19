@@ -139,16 +139,26 @@ export function startEncoder(kbps = 96) {
 }
 
 // ------------------------------------------------------------------ storage
+// One cached IndexedDB connection; if IndexedDB is unavailable (some private modes), the app can
+// switch to an in-memory store: everything works, but a closed page can't be resumed.
+let dbP = null;
 function db() {
-  return new Promise((resolve, reject) => {
+  dbP ||= new Promise((resolve, reject) => {
     const req = indexedDB.open("podcast-creator", 1);
     req.onupgradeneeded = () => {
       req.result.createObjectStore("jobs", { keyPath: "id" });
       req.result.createObjectStore("parts");
     };
-    req.onsuccess = () => resolve(req.result);
+    req.onsuccess = () => {
+      const d = req.result;
+      d.onversionchange = () => { d.close(); dbP = null; };     // another tab upgrades: let it
+      d.onclose = () => { dbP = null; };                        // closed by the browser: reopen next time
+      resolve(d);
+    };
     req.onerror = () => reject(req.error);
-  });
+    req.onblocked = () => reject(new Error("The browser's storage is blocked by another tab."));
+  }).catch((e) => { dbP = null; throw e; });
+  return dbP;
 }
 async function tx(store, mode, fn) {
   const d = await db();
@@ -157,16 +167,78 @@ async function tx(store, mode, fn) {
     const req = fn(t.objectStore(store));
     t.oncomplete = () => resolve(req?.result);
     t.onerror = () => reject(t.error);
+    t.onabort = () => reject(t.error || new Error("Storage write was aborted (the device may be out of space)."));
   });
 }
+const memory = { jobs: new Map(), parts: new Map() };
+const copy = (v) => (typeof Blob !== "undefined" && v instanceof Blob) ? v : structuredClone(v);
+const partKeys = (jobId) => IDBKeyRange.bound(`${jobId}/`, `${jobId}/￿`);
+let persistent = true;
+// Mastered audio is kept as 16-bit, scaled to its own peak (half the space of Float32, and far
+// below audible: 96 dB of range before the final gain of at most +12 dB).
+function packFloat(f) {
+  let peak = 0;
+  for (let i = 0; i < f.length; i++) { const a = Math.abs(f[i]); if (a > peak) peak = a; }
+  const scale = peak || 1, data = new Int16Array(f.length);
+  for (let i = 0; i < f.length; i++) data[i] = Math.round(f[i] / scale * 32767);
+  return { scale, data };
+}
+function unpackFloat(v) {
+  if (!v || v instanceof Float32Array) return v;          // jobs saved before the 16-bit format
+  const out = new Float32Array(v.data.length), k = v.scale / 32767;
+  for (let i = 0; i < out.length; i++) out[i] = v.data[i] * k;
+  return out;
+}
 export const store = {
-  putPart: (jobId, i, pcm) => tx("parts", "readwrite", (s) => s.put(pcm, `${jobId}/${i}`)),
-  getPart: (jobId, i) => tx("parts", "readonly", (s) => s.get(`${jobId}/${i}`)),
-  hasPart: async (jobId, i) => (await tx("parts", "readonly", (s) => s.count(`${jobId}/${i}`))) > 0,
-  saveJob: (job) => tx("jobs", "readwrite", (s) => s.put(job)),
-  loadJob: (id) => tx("jobs", "readonly", (s) => s.get(id)),
-  async deleteParts(jobId) {
-    await tx("parts", "readwrite", (s) => s.delete(IDBKeyRange.bound(`${jobId}/`, `${jobId}/￿`)));
+  get persistent() { return persistent; },
+  /** Keep everything in memory from now on (IndexedDB unavailable). */
+  useMemory() { persistent = false; },
+  putPart: (jobId, i, v) => persistent ? tx("parts", "readwrite", (s) => s.put(v, `${jobId}/${i}`))
+    : (memory.parts.set(`${jobId}/${i}`, copy(v)), Promise.resolve()),
+  getPart: (jobId, i) => persistent ? tx("parts", "readonly", (s) => s.get(`${jobId}/${i}`))
+    : Promise.resolve(memory.parts.has(`${jobId}/${i}`) ? copy(memory.parts.get(`${jobId}/${i}`)) : undefined),
+  hasPart: async (jobId, i) => persistent ? (await tx("parts", "readonly", (s) => s.count(`${jobId}/${i}`))) > 0
+    : memory.parts.has(`${jobId}/${i}`),
+  putMastered: (jobId, i, float) => store.putPart(jobId, `m${i}`, packFloat(float)),
+  getMastered: async (jobId, i) => unpackFloat(await store.getPart(jobId, `m${i}`)),
+  saveJob: (job) => persistent ? tx("jobs", "readwrite", (s) => s.put(job))
+    : (memory.jobs.set(job.id, copy(job)), Promise.resolve()),
+  loadJob: (id) => persistent ? tx("jobs", "readonly", (s) => s.get(id))
+    : Promise.resolve(memory.jobs.has(id) ? copy(memory.jobs.get(id)) : undefined),
+  allJobs: () => persistent ? tx("jobs", "readonly", (s) => s.getAll())
+    : Promise.resolve([...memory.jobs.values()].map(copy)),
+  /** Delete a job's parts, except the named ones (e.g. ["mp3"]). */
+  async deleteParts(jobId, keep = []) {
+    const keepKeys = new Set(keep.map((k) => `${jobId}/${k}`));
+    if (!persistent) {
+      for (const k of [...memory.parts.keys()]) if (k.startsWith(`${jobId}/`) && !keepKeys.has(k)) memory.parts.delete(k);
+      return;
+    }
+    if (!keepKeys.size) return tx("parts", "readwrite", (s) => s.delete(partKeys(jobId)));
+    const keys = await tx("parts", "readonly", (s) => s.getAllKeys(partKeys(jobId)));
+    await tx("parts", "readwrite", (s) => { for (const k of keys) if (!keepKeys.has(k)) s.delete(k); });
+  },
+  /**
+   * Free space on start: drop every job's parts except those of `resumable` (a job that can still be
+   * continued) and the MP3 of `finished`; drop job records that keep nothing. Previews are kept.
+   */
+  async cleanup({ resumable = null, finished = null } = {}) {
+    const keepJobs = new Set([resumable, finished].filter(Boolean));
+    const doomed = (k) => {
+      const [id, part] = [k.slice(0, k.indexOf("/")), k.slice(k.indexOf("/") + 1)];
+      return id !== "preview" && id !== resumable && !(id === finished && part === "mp3");
+    };
+    if (!persistent) {
+      for (const k of [...memory.parts.keys()]) if (doomed(k)) memory.parts.delete(k);
+      for (const id of [...memory.jobs.keys()]) if (!keepJobs.has(id)) memory.jobs.delete(id);
+      return;
+    }
+    const keys = await tx("parts", "readonly", (s) => s.getAllKeys());
+    const drop = keys.filter((k) => typeof k === "string" && doomed(k));
+    if (drop.length) await tx("parts", "readwrite", (s) => { for (const k of drop) s.delete(k); });
+    const ids = await tx("jobs", "readonly", (s) => s.getAllKeys());
+    const old = ids.filter((id) => !keepJobs.has(id));
+    if (old.length) await tx("jobs", "readwrite", (s) => { for (const id of old) s.delete(id); });
   },
 };
 
