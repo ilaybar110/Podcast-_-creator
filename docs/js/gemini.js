@@ -9,6 +9,8 @@ const TTS_PREF = ["gemini-3.1-flash-tts-preview", "gemini-3.1-flash-tts", "gemin
   "gemini-2.5-pro-preview-tts", "gemini-2.5-flash-tts", "gemini-2.5-flash-preview-tts"];
 const TEXT_PREF = ["gemini-3.1-pro-preview", "gemini-3-pro-preview", "gemini-2.5-pro",
   "gemini-3.1-flash-preview", "gemini-3-flash-preview", "gemini-2.5-flash"];
+// Grounding with Google Search is free only on the 2.5 Flash models (3.x models charge per search).
+const SEARCH_PREF = ["gemini-2.5-flash", "gemini-2.5-flash-lite"];
 const BLOCK = new Set(["SAFETY", "PROHIBITED_CONTENT", "BLOCKLIST", "SPII", "RECITATION", "OTHER_BLOCK"]);
 
 export const VOICES = [
@@ -172,16 +174,17 @@ export class Gate {
   }
 }
 
-export async function freeVerdict({ chars, mode, apiKey, overrides, billing, alreadyDone = 0, ledger = LEDGER }) {
+/** `plan` (optional) gives the request counts directly, e.g. for a podcast written from a topic. */
+export async function freeVerdict({ chars, mode, apiKey, overrides, billing, alreadyDone = 0, plan = null, ledger = LEDGER }) {
   const kid = await keyId(apiKey);
   const chunk = DATA.FREE_CHUNK_CHARS;
-  const need = {
+  const need = plan ? { ...plan } : {
     gemini_tts: Math.max(0, Math.ceil(chars * (mode === "conversation" ? 1.25 : 1) / chunk) - alreadyDone),
     gemini_text: mode === "conversation" ? Math.ceil(chars / 6000) : 0,
   };
   const buckets = {};
   let days = 1;
-  for (const b of ["gemini_tts", "gemini_text"]) {
+  for (const b of ["gemini_tts", "gemini_text", "gemini_search"]) {
     if (!need[b]) continue;
     const lim = ledger.limits(kid, b, overrides?.[b]);
     const left = Math.max(0, lim.rpd - ledger.used(kid, b));
@@ -251,8 +254,14 @@ export class Gemini {
     return m;
   }
 
-  async generate(model, body) {
-    const bucket = model.includes("tts") ? "gemini_tts" : "gemini_text";
+  async searchModel() {
+    const names = await this.models();
+    const m = SEARCH_PREF.find((p) => names.includes(p));
+    if (m || this.freeOnly) return m || null;
+    return this.textModel();
+  }
+
+  async generate(model, body, bucket = model.includes("tts") ? "gemini_tts" : "gemini_text") {
     const prompt = body.contents.flatMap((c) => c.parts).map((p) => p.text || "").join("");
     await this.gate.acquire(bucket, estimateTokens(prompt));
     let r;
@@ -325,5 +334,20 @@ export class Gemini {
     const text = (data.candidates?.[0]?.content?.parts || []).filter((p) => !p.thought).map((p) => p.text || "").join("");
     if (!text.trim()) throw new ProviderError("Gemini returned an empty script", { retryable: true });
     return text;
+  }
+
+  /** One request with Grounding with Google Search: returns the answer and the web pages it used. */
+  async searchText(prompt) {
+    const model = await this.searchModel();
+    if (!model) throw new ProviderError("This key has no model with free Google Search.");
+    const data = await this.generate(model, { contents: [{ role: "user", parts: [{ text: prompt }] }],
+      tools: [{ google_search: {} }], generationConfig: { temperature: 0.7 } }, "gemini_search");
+    const cand = data.candidates?.[0] || {};
+    const text = (cand.content?.parts || []).filter((p) => !p.thought).map((p) => p.text || "").join("");
+    if (!text.trim()) throw new ProviderError("Google Search research came back empty", { retryable: true });
+    const meta = cand.groundingMetadata || cand.grounding_metadata || {};
+    const sources = (meta.groundingChunks || meta.grounding_chunks || []).map((c) => c.web).filter((w) => w?.uri)
+      .map((w) => ({ title: w.title || w.domain || w.uri, url: w.uri }));
+    return { text, sources };
   }
 }

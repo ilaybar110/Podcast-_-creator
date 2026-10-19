@@ -164,3 +164,28 @@ dialog .check input { margin-top: 5px; }
 .keep-open { margin: 10px 0 0; }
 .foot { max-width: 920px; margin: 0 auto; padding: 0 16px 40px; color: var(--muted); font-size: 13px; text-align: center; }
 .foot a { color: var(--muted); }
+
+/* podcast from a topic */
+.src-seg { display: flex; width: 100%; }
+.src-seg button { flex: 1 1 0; }
+.topic-row { flex-wrap: nowrap; gap: 10px; align-items: stretch; }
+.topic-row input { flex: 1 1 auto; min-width: 0; }
+.topic-row button { flex: 0 0 auto; }
+.summary { margin: 4px 0 14px; line-height: 1.55; }
+.angles { display: grid; gap: 8px; margin-bottom: 10px; }
+.angle { text-align: start; border: 1px solid var(--line); border-radius: 12px; padding: 10px 12px; background: var(--card);
+  color: var(--ink); font: inherit; cursor: pointer; display: flex; gap: 10px; align-items: flex-start; }
+.angle .tick { flex: 0 0 22px; height: 22px; border-radius: 6px; border: 1.5px solid var(--line); display: grid; place-items: center;
+  font-size: 14px; color: var(--accent-ink); }
+.angle.on { border-color: var(--accent); background: var(--accent-soft); }
+.angle.on .tick { background: var(--accent); border-color: var(--accent); }
+.angle b { display: block; }
+.angle span.d { color: var(--muted); font-size: 13.5px; }
+.minutes-out { color: var(--accent); }
+input[type=range] { width: 100%; accent-color: var(--accent); height: 32px; }
+.range-ends { display: flex; justify-content: space-between; color: var(--muted); font-size: 12.5px; }
+.sources { margin-top: 6px; font-size: 14px; }
+.sources summary { cursor: pointer; font-weight: 600; }
+.sources ol { margin: 8px 0 0; padding-inline-start: 22px; }
+.sources li { margin-bottom: 4px; overflow-wrap: anywhere; }
+.sources a { color: var(--accent); }

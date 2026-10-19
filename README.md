@@ -47,6 +47,25 @@ GitHub Pages and used from a phone:
 choose branch `claude/podcast-creator-app` and folder **`/docs`**, then **Save**. After a minute the app
 is live at <https://ilaybar110.github.io/Podcast-_-creator/>.
 
+## Podcast from a topic (web research)
+
+In the GitHub Pages app, choose **From a topic**, write a subject and tap **Find sources**.
+The app searches Google (Grounding with Google Search) and Wikipedia, then shows a short
+summary, the sources it found and about six directions the episode could focus on. Pick
+one or more (or write your own), set the length with the slider (2-30 minutes) and create it.
+The script is written as an in-depth episode, not a summary: it explains why and how, uses
+examples and numbers from the sources, and presents competing views. You get one narrator
+or two hosts, as usual.
+
+Cost is kept low:
+- **Find sources** = 1 Google-Search request plus free Wikipedia lookups.
+- **Create** = 1 more search (a deep dive on what you picked), 1 script request per ~12
+  minutes of audio, and the voice recording.
+- Search runs only on Gemini 2.5 Flash, where Google Search is free (3.x models charge per
+  search). If search is unavailable, the research uses Wikipedia instead.
+- Only the voice recording uses the small daily voice quota. The badge under the slider
+  shows the exact number of requests before you start.
+
 ## Is it free? (checked before you click "Create")
 
 Next to the length estimate, a badge shows whether the podcast will cost money:

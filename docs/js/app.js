@@ -4,6 +4,7 @@ import { STYLES } from "./prompts.js";
 import { DATA } from "./prompts_data.js";
 import { Gemini, QuotaExhausted, VOICES, freeVerdict, withRetries } from "./gemini.js";
 import { Cancelled, hostNames, runJob } from "./job.js";
+import { research, topicPlan } from "./research.js";
 import * as A from "./audio.js";
 
 const I18N = {
@@ -48,6 +49,19 @@ const I18N = {
     paidBlocked: "במפתח מוגדר חיוב, אז כל בקשה תעלה כסף. כבו את 'מצב חינם בלבד' בהגדרות כדי לאשר תשלום, או השתמשו במפתח מפרויקט בלי חיוב.",
     cancelled: "בוטל.",
     tapAgain: "הדוגמה מוכנה — הקישו שוב על ▶ כדי לשמוע.",
+    srcText: "מהטקסט שלי", srcTopic: "מנושא — מחקר מהאינטרנט", topicTitle: "על מה הפודקאסט?",
+    topicPlaceholder: "למשל: איך עובד הזיכרון האנושי, המהפכה התעשייתית, בינה מלאכותית ברפואה…",
+    findSources: "חיפוש מקורות",
+    topicHint: "האפליקציה תחפש מקורות ב-Google ובוויקיפדיה ותציע לכם כיווני התמקדות. החיפוש חינמי ולא נוגע במכסת הקולות.",
+    researching: "מחפשים מקורות ומכינים סיכום מחקר… (כחצי דקה)",
+    focusTitle: "על מה להתמקד? (אפשר לבחור כמה)", customFocus: "או כתבו כיוון משלכם (לא חובה)",
+    lengthLabel: "אורך הפודקאסט", minShort: "2 דק׳", maxLong: "30 דק׳", minutesUnit: "דקות",
+    sourcesTitle: "המקורות שנמצאו", wikiOnly: "חיפוש Google לא היה זמין כרגע, לכן המחקר מבוסס על ויקיפדיה.",
+    needTopic: "כתבו נושא קודם.", needResearch: "לחצו קודם על \"חיפוש מקורות\".", needFocus: "בחרו לפחות כיוון אחד להתמקד בו.",
+    fSearch: " + חיפוש מעמיק אחד ב-Google ({left} נשארו היום).",
+    narratorTopicHint: "קריין/ית אחד/ת מגיש/ה פרק מעמיק על הנושא, בקול חם וטבעי.",
+    convTopicHint: "שני מגישים משוחחים לעומק על הנושא — כמו פודקאסט אמיתי.",
+    sourcesHead: "מקורות",
     interruptedText: "היצירה נקטעה (הדף נסגר). החלקים שכבר הוקלטו שמורים — אפשר להמשיך מאיפה שעצרנו.",
   },
   en: {
@@ -91,6 +105,19 @@ const I18N = {
     paidBlocked: "Billing is enabled on this key, so every request would cost money. Turn off free-only mode in Settings to allow that, or use a key from a project without billing.",
     cancelled: "Cancelled.",
     tapAgain: "The sample is ready — tap ▶ again to listen.",
+    srcText: "From my text", srcTopic: "From a topic — web research", topicTitle: "What is the podcast about?",
+    topicPlaceholder: "e.g. how human memory works, the industrial revolution, AI in medicine…",
+    findSources: "Find sources",
+    topicHint: "The app searches Google and Wikipedia for sources and suggests what to focus on. Searching is free and doesn't touch the voice quota.",
+    researching: "Finding sources and preparing research notes… (about 30 seconds)",
+    focusTitle: "What should it focus on? (pick one or more)", customFocus: "Or write your own focus (optional)",
+    lengthLabel: "Podcast length", minShort: "2 min", maxLong: "30 min", minutesUnit: "min",
+    sourcesTitle: "Sources found", wikiOnly: "Google Search wasn't available right now, so the research is based on Wikipedia.",
+    needTopic: "Write a topic first.", needResearch: "Tap \"Find sources\" first.", needFocus: "Pick at least one focus.",
+    fSearch: " + 1 in-depth Google search ({left} left today).",
+    narratorTopicHint: "One host presents an in-depth episode on the topic in a warm, natural voice.",
+    convTopicHint: "Two hosts discuss the topic in depth — like a real podcast.",
+    sourcesHead: "Sources",
     interruptedText: "Recording was interrupted (the page was closed). The parts already recorded are saved — continue where it stopped.",
   },
 };
@@ -115,7 +142,11 @@ const store = {
 const state = {
   ui: store.get("ui", "he"), lang: "he", langTouched: false, mode: "narrator", style: "warm", pace: "natural",
   voice: "Sulafat", voice2: "Achird", showAll: false, busy: false, cancel: false, job: null, free: null, t0: 0,
+  src: store.get("src", "text"), research: null, focus: new Set(), researching: false,
 };
+try { state.research = JSON.parse(store.get("research", "null")); } catch { /* old or corrupt */ }
+if (state.research?.angles) state.focus = new Set(state.research.angles.slice(0, 2).map((x) => x.id));
+else state.research = null;
 const t = (k) => I18N[state.ui][k] ?? k;
 const fmt = (s, v) => s.replace(/\{(\w+)\}/g, (_, k) => v[k] ?? "");
 const key = () => store.get("geminiKey", "");
@@ -155,6 +186,11 @@ function applyUI() {
     chips.appendChild(b);
   }
   $("keyCard").hidden = !!key();
+  setSeg("srcSeg", state.src);
+  $("topicCard").hidden = state.src !== "topic";
+  $("textCard").hidden = state.src === "topic";
+  $("minutesOut").textContent = `${$("minutes").value} ${t("minutesUnit")}`;
+  renderResearch();
   renderVoices();
   updateHint();
   onTextChange();
@@ -196,20 +232,24 @@ function renderVoices() {
 }
 
 function updateHint() {
-  $("modeHint").textContent = state.mode === "conversation" ? t("convHint") : t("narratorHint");
+  const topic = state.src === "topic";
+  $("modeHint").textContent = state.mode === "conversation" ? t(topic ? "convTopicHint" : "convHint")
+    : t(topic ? "narratorTopicHint" : "narratorHint");
   $("generate").disabled = state.busy;
 }
 
 function renderFree(f) {
-  const el = $("freeBadge");
+  const el = $(state.src === "topic" ? "topicBadge" : "freeBadge");
+  $(state.src === "topic" ? "freeBadge" : "topicBadge").hidden = true;
   state.free = f;
   if (!f) { el.hidden = true; return; }
-  const tts = f.buckets.gemini_tts, txt = f.buckets.gemini_text;
+  const tts = f.buckets.gemini_tts, txt = f.buckets.gemini_text, web = f.buckets.gemini_search;
   let cls = "ok", html;
   if (f.status === "paid") { cls = "bad"; html = t("fPaid"); }
   else if (f.status === "free_multi_day") { cls = "wait"; html = fmt(t("fMulti"), { days: f.days, reset: resetTime(f.reset_at) }); }
   else html = fmt(t("fFree"), { need: tts.needed + tts.reserve, left: tts.left_today });
   if (txt && f.status !== "paid") html += fmt(t("fFreeScript"), { need: txt.needed + txt.reserve, left: txt.left_today });
+  if (web && f.status !== "paid") html += fmt(t("fSearch"), { left: web.left_today });
   if (!freeOpts().freeOnly && f.status !== "free") html += t("fOff");
   const sub = [];
   if (tts.reserve) sub.push(fmt(t("fReserve"), { reserve: tts.reserve }));
@@ -223,6 +263,7 @@ let estTimer = null;
 function onTextChange() {
   clearTimeout(estTimer);
   estTimer = setTimeout(async () => {
+    if (state.src === "topic") return topicEstimate();
     const raw = $("text").value;
     const text = cleanText(raw);
     if (!text) { $("statChars").textContent = "0"; $("statWords").textContent = "0"; $("statEst").textContent = "0:00"; renderFree(null); return; }
@@ -236,6 +277,87 @@ function onTextChange() {
     const o = freeOpts();
     renderFree(await freeVerdict({ chars: text.length, mode: state.mode, apiKey: key(), overrides: o.limits, billing: o.billing }));
   }, 250);
+}
+
+// ---------------------------------------------------------------- podcast from a topic
+async function topicEstimate() {
+  const minutes = +$("minutes").value;
+  $("minutesOut").textContent = `${minutes} ${t("minutesUnit")}`;
+  if (!key() || !state.research) return renderFree(null);
+  const o = freeOpts();
+  const plan = topicPlan(minutes, state.lang, state.mode, o.freeOnly ? DATA.FREE_CHUNK_CHARS : 1500);
+  renderFree(await freeVerdict({ apiKey: key(), overrides: o.limits, billing: o.billing, plan }));
+}
+
+function topicStatus(msg, isError = false) {
+  const el = $("researchStatus");
+  el.hidden = !msg;
+  el.textContent = msg || "";
+  el.classList.toggle("error", isError);
+}
+
+function renderResearch() {
+  const r = state.research;
+  $("researchOut").hidden = !r;
+  if (!r) return;
+  if (!$("topic").value) $("topic").value = r.topic;
+  $("resSummary").textContent = r.summary;
+  const box = $("angles");
+  box.innerHTML = "";
+  for (const a of r.angles) {
+    const b = document.createElement("button");
+    b.type = "button";
+    b.className = "angle" + (state.focus.has(a.id) ? " on" : "");
+    b.setAttribute("aria-pressed", state.focus.has(a.id));
+    b.innerHTML = `<span class="tick">✓</span><span><b></b><span class="d"></span></span>`;
+    b.querySelector("b").textContent = a.title;
+    b.querySelector(".d").textContent = a.description;
+    b.onclick = () => {
+      state.focus.has(a.id) ? state.focus.delete(a.id) : state.focus.add(a.id);
+      b.classList.toggle("on", state.focus.has(a.id));
+      b.setAttribute("aria-pressed", state.focus.has(a.id));
+    };
+    box.appendChild(b);
+  }
+  $("sourceCount").textContent = r.sources.length;
+  const list = $("sourceList");
+  list.innerHTML = "";
+  for (const s of r.sources) {
+    const li = document.createElement("li");
+    const a = document.createElement("a");
+    a.href = s.url; a.target = "_blank"; a.rel = "noopener"; a.textContent = s.title;
+    li.appendChild(a);
+    list.appendChild(li);
+  }
+  if (!r.searched) topicStatus(t("wikiOnly"));
+}
+
+async function findSources() {
+  if (state.researching) return;
+  const topic = $("topic").value.trim();
+  if (!topic) return topicStatus(t("needTopic"), true);
+  if (!key()) return topicStatus(t("needKey"), true);
+  if (freeOpts().billing && freeOpts().freeOnly) return topicStatus(t("paidBlocked"), true);
+  if (!state.langTouched) { state.lang = detectLanguage(topic); setSeg("langSeg", state.lang); }
+  state.researching = true;
+  $("researchBtn").disabled = true;
+  topicStatus(t("researching"));
+  try {
+    const r = await research(topic, state.lang, gemini());
+    state.research = r;
+    state.focus = new Set(r.angles.slice(0, 2).map((a) => a.id));
+    store.set("research", JSON.stringify(r));
+    if (!$("title").value || Object.values(I18N).some((d) => d.defaultTitle === $("title").value)) $("title").value = r.title;
+    topicStatus("");
+    renderResearch();
+  } catch (e) {
+    topicStatus(e instanceof QuotaExhausted ? fmt(t("pausedText"), { reset: resetTime(e.resetAt.toISOString()) })
+      : e.message || String(e), true);
+  } finally {
+    state.researching = false;
+    $("researchBtn").disabled = false;
+    onTextChange();
+  }
 }
 
 // ---------------------------------------------------------------- preview
@@ -343,15 +465,24 @@ document.addEventListener("visibilitychange", () => { if (state.busy && document
 async function generate() {
   if (state.busy) return;
   showError("");
-  const text = $("text").value;
-  if (!cleanText(text)) return showError(t("emptyText"));
+  const fromTopic = state.src === "topic";
+  const text = fromTopic ? "" : $("text").value;
+  let topic = null;
+  if (fromTopic) {
+    const r = state.research;
+    if (!r) return showError(t("needResearch"));
+    const focus = r.angles.filter((a) => state.focus.has(a.id)).map((a) => `${a.title} - ${a.description}`);
+    if ($("customFocus").value.trim()) focus.push($("customFocus").value.trim());
+    if (!focus.length) return showError(t("needFocus"));
+    topic = { topic: r.topic, notes: r.notes, sources: r.sources, focus, minutes: +$("minutes").value };
+  } else if (!cleanText(text)) return showError(t("emptyText"));
   if (!key()) return showError(t("needKey"));
   const o = freeOpts();
   if (o.billing && o.freeOnly) return showError(t("paidBlocked"));
   if (state.free?.status === "free_multi_day" && o.freeOnly && !confirm(fmt(t("confirmMulti"), { days: state.free.days }))) return;
   const job = {
     id: Date.now().toString(36) + Math.random().toString(36).slice(2, 7), status: "running", warnings: [], script: null,
-    request: { text, language: state.lang, mode: state.mode, voice: state.voice, voice2: state.voice2,
+    request: { text, topic, language: state.lang, mode: state.mode, voice: state.voice, voice2: state.voice2,
       style: state.style, pace: state.pace, title: $("title").value || t("defaultTitle") },
   };
   await A.store.saveJob(job);
@@ -418,14 +549,25 @@ async function showResult(job, blob) {
   $("download").href = url;
   $("download").download = `${safe}.mp3`;
   $("warnings").textContent = (job.warnings || []).join(" · ");
-  $("showScript").hidden = !job.script;
+  const lines = job.script || job.narration;
+  $("showScript").hidden = !lines;
   $("script").hidden = true;
   $("script").innerHTML = "";
-  for (const line of job.script || []) {
+  for (const line of lines || []) {
     const p = document.createElement("p");
-    const b = document.createElement("b"); b.textContent = line.speaker + ": ";
-    p.append(b, document.createTextNode(line.text));
+    if (line.speaker) { const b = document.createElement("b"); b.textContent = line.speaker + ": "; p.append(b); }
+    p.append(document.createTextNode(line.text));
     $("script").appendChild(p);
+  }
+  if (job.sources?.length) {
+    const h = document.createElement("h3"); h.textContent = t("sourcesHead");
+    const ol = document.createElement("ol");
+    for (const s of job.sources) {
+      const li = document.createElement("li"), a = document.createElement("a");
+      a.href = s.url; a.target = "_blank"; a.rel = "noopener"; a.textContent = s.title;
+      li.appendChild(a); ol.appendChild(li);
+    }
+    $("script").append(h, ol);
   }
   $("result").scrollIntoView({ behavior: "smooth", block: "start" });
 }
@@ -458,6 +600,10 @@ function seg(id, k, onChange) {
 seg("langSeg", "lang", () => { state.langTouched = true; onTextChange(); });
 seg("modeSeg", "mode", () => { renderVoices(); updateHint(); onTextChange(); });
 seg("paceSeg", "pace");
+seg("srcSeg", "src", () => { store.set("src", state.src); showError(""); applyUI(); });
+$("researchBtn").addEventListener("click", findSources);
+$("topic").addEventListener("keydown", (e) => { if (e.key === "Enter") { e.preventDefault(); findSources(); } });
+$("minutes").addEventListener("input", onTextChange);
 state.voice = store.get("voice", state.voice);
 state.voice2 = store.get("voice2", state.voice2);
 

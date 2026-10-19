@@ -41,6 +41,41 @@
   </section>
 
   <section class="card">
+    <div class="seg src-seg" id="srcSeg">
+      <button data-v="text" class="on" data-i18n="srcText">מטקסט שלי</button>
+      <button data-v="topic" data-i18n="srcTopic">מנושא (מחקר מהאינטרנט)</button>
+    </div>
+  </section>
+
+  <section class="card" id="topicCard" hidden>
+    <h2><span class="step">1</span> <span data-i18n="topicTitle">הנושא</span></h2>
+    <div class="row topic-row">
+      <input id="topic" type="text" dir="auto" data-i18n-placeholder="topicPlaceholder">
+      <button class="primary small-primary" id="researchBtn" data-i18n="findSources">חיפוש מקורות</button>
+    </div>
+    <p class="hint" data-i18n="topicHint"></p>
+    <div id="researchStatus" class="hint" hidden></div>
+    <div id="researchOut" hidden>
+      <p id="resSummary" class="summary" dir="auto"></p>
+      <div class="field">
+        <label data-i18n="focusTitle">על מה להתמקד?</label>
+        <div class="angles" id="angles"></div>
+        <input id="customFocus" type="text" dir="auto" data-i18n-placeholder="customFocus">
+      </div>
+      <div class="field">
+        <label for="minutes"><span data-i18n="lengthLabel">אורך הפודקאסט</span>: <b id="minutesOut" class="minutes-out">8</b></label>
+        <input id="minutes" type="range" min="2" max="30" step="1" value="8">
+        <div class="range-ends"><span data-i18n="minShort">2 דק׳</span><span data-i18n="maxLong">30 דק׳</span></div>
+      </div>
+      <details class="sources">
+        <summary><span data-i18n="sourcesTitle">מקורות</span> (<span id="sourceCount">0</span>)</summary>
+        <ol id="sourceList" dir="auto"></ol>
+      </details>
+    </div>
+    <div id="topicBadge" class="free-badge" hidden></div>
+  </section>
+
+  <section class="card" id="textCard">
     <div class="card-head">
       <h2><span class="step">1</span> <span data-i18n="step1">הטקסט שלך</span></h2>
       <label class="file-btn">

@@ -33,6 +33,11 @@ DEFAULT_LIMITS = {
     "gemini_text": {"rpm": int(os.getenv("GEMINI_FREE_TEXT_RPM", "10")),
                     "rpd": int(os.getenv("GEMINI_FREE_TEXT_RPD", "250")),
                     "tpm": int(os.getenv("GEMINI_FREE_TEXT_TPM", "250000"))},
+    # "Grounding with Google Search" (the browser's topic research). Free only on Gemini 2.5 Flash
+    # models; Google reports a few hundred free searches a day, so this default stays well inside.
+    "gemini_search": {"rpm": int(os.getenv("GEMINI_FREE_SEARCH_RPM", "5")),
+                      "rpd": int(os.getenv("GEMINI_FREE_SEARCH_RPD", "100")),
+                      "tpm": int(os.getenv("GEMINI_FREE_SEARCH_TPM", "250000"))},
 }
 # In free mode each TTS request carries more text, so the daily request quota goes further.
 FREE_CHUNK_CHARS = int(os.getenv("GEMINI_FREE_CHUNK_CHARS", "3000"))

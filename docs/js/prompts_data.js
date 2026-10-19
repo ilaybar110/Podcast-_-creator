@@ -48,6 +48,11 @@ export const DATA = {
    "rpm": 10,
    "rpd": 250,
    "tpm": 250000
+  },
+  "gemini_search": {
+   "rpm": 5,
+   "rpd": 100,
+   "tpm": 250000
   }
  },
  "FREE_CHUNK_CHARS": 3000

@@ -425,3 +425,14 @@ def test_make_previews_records_missing_samples_in_order(tmp_path, monkeypatch, l
     asyncio.run(make_previews.main())          # next run continues where it stopped, and stops at 16
     assert len(list(tmp_path.glob("he/*.mp3"))) == 8 and len(list(tmp_path.glob("en/*.mp3"))) == 8
     assert not (tmp_path / "he" / "Kore.mp3").exists()     # not a recommended voice
+
+
+def test_web_topic_research_and_script():
+    import shutil
+    import subprocess
+    from pathlib import Path
+    if not shutil.which("node"):
+        pytest.skip("node not installed")
+    test = Path(__file__).resolve().parent / "web_topic_test.mjs"
+    out = subprocess.run(["node", str(test)], capture_output=True, text=True)
+    assert out.returncode == 0, out.stderr

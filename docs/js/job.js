@@ -3,6 +3,7 @@ import { cleanText, chunkText, splitSentences } from "./text.js";
 import { podcastScriptPrompt, parseDialogue } from "./prompts.js";
 import { ProviderError, QuotaExhausted, VOICES, withRetries } from "./gemini.js";
 import * as A from "./audio.js";
+import { writeTopicScript } from "./research.js";
 
 const MAX_TAKES = 3;
 const CHUNK_PAUSE = 0.75, TURN_GAP = 0.3;
@@ -66,13 +67,15 @@ async function pool(items, concurrency, worker, shouldStop) {
  */
 export async function runJob(job, gemini, ui) {
   const req = job.request;
-  const text = cleanText(req.text);
-  if (!text) throw new ProviderError("The text is empty after cleanup.");
   const gender = Object.fromEntries(VOICES.map((v) => [v.id, v.gender]));
   const v1 = req.voice, v2 = req.voice2 && req.voice2 !== v1 ? req.voice2 : VOICES.find((v) => v.id !== v1 && v.recommended).id;
   const genders = [gender[v1] || "female", gender[v2] || "male"];
   const opts = { language: req.language, style: req.style, pace: req.pace,
     hostNames: hostNames(req.language, genders[0], genders[1]), genders };
+  // A podcast from a topic: research the chosen focus and write the script first (saved, so resuming skips it).
+  if (req.topic && !req.text) await writeTopicScript(job, gemini, ui, opts, (j) => A.store.saveJob(j));
+  const text = cleanText(req.text);
+  if (!text) throw new ProviderError("The text is empty after cleanup.");
   job.chunkChars ||= gemini.maxChunkChars;    // fixed on first run so resumed jobs line up
   gemini.gate.onWait = (s) => ui.progress(null, `Staying within the free tier: waiting ${Math.round(s)}s for the per-minute limit`);
 
@@ -142,7 +145,8 @@ export async function runJob(job, gemini, ui) {
       const [a, b] = halves(sentences);      // shorter requests are cut off far less often
       return joinPcm([await speak(a.join(" "), label, depth + 1), await speak(b.join(" "), label, depth + 1)], 0.35);
     };
-    await pool(units, gemini.concurrency, (i, paras) => record(i, () => speak(paras.join("\n\n"), `Part ${i + 1}`), 0.02, 0.88),
+    await pool(units, gemini.concurrency, (i, paras) => record(i, () => speak(paras.join("\n\n"), `Part ${i + 1}`),
+      req.topic ? 0.25 : 0.02, req.topic ? 0.65 : 0.88),
       ui.cancelled);
   }
 
