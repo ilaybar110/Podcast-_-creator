@@ -558,6 +558,8 @@ async function run(job) {
       showPaused(job);
     } else if (e instanceof Cancelled) {
       job.status = "cancelled"; showError(t("cancelled"));
+    } else if (job.status === "done") {
+      showError(e.message || String(e));       // the MP3 is already saved; never re-record a finished job
     } else {
       // Recorded parts are kept, so a failed job can be continued like a paused one.
       job.status = "error"; job.error = e.message || String(e);

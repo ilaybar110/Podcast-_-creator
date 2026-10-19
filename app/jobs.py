@@ -329,7 +329,7 @@ async def _narrator_segments(job, provider, text, opts, voice):
     async def worker(i, paras):
         if _part_path(job, i).exists():
             return _part_path(job, i)
-        return _save_part(job, i, await speak(prepare_for_speech("\n\n".join(paras)), f"Part {i + 1}"))
+        return _save_part(job, i, await speak(prepare_for_speech("\n\n".join(paras), opts.language), f"Part {i + 1}"))
 
     pcms = await _run_parallel(job, provider, chunks, worker, 0.02, 0.94)
     return list(zip(pcms, break_pauses(breaks, TAIL_SEC)))
@@ -373,7 +373,7 @@ async def _conversation_segments(job, provider, text, opts, v1, v2):
         async def worker(i, batch: list[Turn]):
             if _part_path(job, i).exists():
                 return _part_path(job, i)
-            spoken = [Turn(t.speaker, prepare_for_speech(t.text)) for t in batch]   # the shown script stays as written
+            spoken = [Turn(t.speaker, prepare_for_speech(t.text, opts.language)) for t in batch]   # the shown script stays as written
             return _save_part(job, i, await speak(spoken, f"Part {i + 1}"))
 
         pcms = await _run_parallel(job, provider, batches, worker, 0.28, 0.68)
@@ -383,7 +383,7 @@ async def _conversation_segments(job, provider, text, opts, v1, v2):
     async def worker(i, turn: Turn):
         if _part_path(job, i).exists():
             return _part_path(job, i)
-        said = prepare_for_speech(turn.text)
+        said = prepare_for_speech(turn.text, opts.language)
         pcm, problems = await best_take(lambda: provider.synthesize(said, voices[turn.speaker], opts),
                                         said, opts.language, job, f"Line {i + 1}")
         if _truncated(problems):

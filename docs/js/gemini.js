@@ -439,7 +439,7 @@ export class Gemini {
       data = await this.generate(model, { contents: [{ role: "user", parts: [{ text: prompt }] }],
         tools: [{ google_search: {} }], generationConfig: { temperature: 0.7 } }, "gemini_search");
     } catch (e) {
-      if (alsoText && (e.refunded || (e instanceof Cancelled && e.noResponse !== false))) await this.gate.refund("gemini_text");
+      if (alsoText && (e.refunded || e instanceof QuotaExhausted || (e instanceof Cancelled && e.noResponse !== false))) await this.gate.refund("gemini_text");
       throw e;
     }
     const cand = data.candidates?.[0] || {};

@@ -14,6 +14,7 @@ const RETAKES = {
 };
 const TARGET_LUFS = -16;
 const LEAD_IN_SEC = 0.35, TAIL_SEC = 0.6;
+const BATCH_VERSION = 2;      // bump when batchTurns changes where batches end
 
 export { Cancelled };
 
@@ -62,7 +63,8 @@ export function batchTurns(turns, maxChars) {
 }
 
 // What the voice reads: numbers/symbols spelled out (the saved and shown script stays as written).
-const spokenTurns = (batch) => batch.map((t) => ({ ...t, text: prepareForSpeech(t.text) }));
+// The job's language is passed: a short Hebrew turn with an English cue like [laughs] must not be detected as English.
+const spokenTurns = (batch, language) => batch.map((t) => ({ ...t, text: prepareForSpeech(t.text, language) }));
 const halves = (a) => [a.slice(0, a.length >> 1), a.slice(a.length >> 1)];
 const truncated = (p) => p.some((x) => x.startsWith("too short"));
 const neverTruncated = (label) => new ProviderError(`${label}: the voice engine keeps cutting this passage short, ` +
@@ -140,12 +142,12 @@ export async function runJob(job, gemini, ui) {
   /** Returns [pcm, problems]; problems is non-empty only for a take we decided to keep anyway. */
   async function bestTake(make, txt, label, part, { depth = 0, canSplit = false } = {}) {
     const maxTakes = depth ? policy.splitTakes : policy.fullTakes;
-    let best = null, bestProblems = null, takes = 0;
+    let best = null, bestProblems = null, takes = 0, outOfBudget = false;
     for (let take = 0; take < maxTakes; take++) {
       if (ui.cancelled()) throw new Cancelled();
       let res;
       try {
-        if (part.requests && !(await mayRetake(part))) break;
+        if (part.requests && !(await mayRetake(part))) { outOfBudget = true; break; }
         res = await withRetries(make);
       } catch (e) {
         // Out of quota on a retake: an earlier complete take is better than nothing.
@@ -163,7 +165,10 @@ export async function runJob(job, gemini, ui) {
       if (!bestProblems || problems.length < bestProblems.length) { best = clean; bestProblems = problems; }
       if (truncated(problems) ? policy.splitEarly && canSplit : policy.acceptSoft) break;
     }
-    if (!best) throw neverTruncated(label);              // no budget left for even one take of this piece
+    if (!best && outOfBudget) {                          // no budget left for even one take of this piece
+      throw new ProviderError(`${label}: this passage used up its retakes for now. Continue to try it again.`);
+    }
+    if (!best) throw neverTruncated(label);
     if (!truncated(bestProblems)) job.warnings.push(`${label}: kept best of ${takes} take${takes > 1 ? "s" : ""} (${bestProblems.join("; ")})`);
     return [best, bestProblems];
   }
@@ -203,6 +208,12 @@ export async function runJob(job, gemini, ui) {
       await A.store.saveJob(job);     // the script is kept, so resuming never re-writes it
     }
     const voices = { [opts.hostNames[0]]: v1, [opts.hostNames[1]]: v2 };
+    // Parts recorded by an older app version used other batch boundaries: re-record them, never mix them.
+    if (job.batchVersion !== BATCH_VERSION) {
+      await A.store.deleteParts(job.id);
+      job.batchVersion = BATCH_VERSION;
+      await A.store.saveJob(job);
+    }
     units = batchTurns(job.script, job.chunkChars);
     pauses = units.map((b, i) => (i < units.length - 1 ? turnGapSec(b[b.length - 1], units[i + 1][0]) : TAIL_SEC));
     const speak = async (batch, label, part, depth = 0) => {
@@ -215,7 +226,7 @@ export async function runJob(job, gemini, ui) {
       return joinPcm([await speak(a, label, part, depth + 1), await speak(b, label, part, depth + 1)],
         turnGapSec(a[a.length - 1], b[0]));
     };
-    await pool(units, gemini.concurrency, (i, batch) => record(i, (part) => speak(spokenTurns(batch), `Part ${i + 1}`, part), 0.28, 0.62),
+    await pool(units, gemini.concurrency, (i, batch) => record(i, (part) => speak(spokenTurns(batch, req.language), `Part ${i + 1}`, part), 0.28, 0.62),
       ui.cancelled);
   } else {
     const { chunks, breaks } = chunkTextWithBreaks(text, job.chunkChars);
@@ -231,7 +242,7 @@ export async function runJob(job, gemini, ui) {
       return joinPcm([await speak(a.join(" "), label, part, depth + 1), await speak(b.join(" "), label, part, depth + 1)],
         BREAK_PAUSE_SEC.sentence);
     };
-    await pool(units, gemini.concurrency, (i, paras) => record(i, (part) => speak(prepareForSpeech(paras.join("\n\n")), `Part ${i + 1}`, part),
+    await pool(units, gemini.concurrency, (i, paras) => record(i, (part) => speak(prepareForSpeech(paras.join("\n\n"), req.language), `Part ${i + 1}`, part),
       req.topic ? 0.25 : 0.02, req.topic ? 0.65 : 0.88),
       ui.cancelled);
   }
