@@ -47,6 +47,7 @@ const I18N = {
     previewCost: "השמעה לדוגמה (משתמשת בבקשה חינמית אחת בפעם הראשונה)",
     paidBlocked: "במפתח מוגדר חיוב, אז כל בקשה תעלה כסף. כבו את 'מצב חינם בלבד' בהגדרות כדי לאשר תשלום, או השתמשו במפתח מפרויקט בלי חיוב.",
     cancelled: "בוטל.",
+    tapAgain: "הדוגמה מוכנה — הקישו שוב על ▶ כדי לשמוע.",
     interruptedText: "היצירה נקטעה (הדף נסגר). החלקים שכבר הוקלטו שמורים — אפשר להמשיך מאיפה שעצרנו.",
   },
   en: {
@@ -89,6 +90,7 @@ const I18N = {
     previewCost: "Preview (uses one free request the first time)",
     paidBlocked: "Billing is enabled on this key, so every request would cost money. Turn off free-only mode in Settings to allow that, or use a key from a project without billing.",
     cancelled: "Cancelled.",
+    tapAgain: "The sample is ready — tap ▶ again to listen.",
     interruptedText: "Recording was interrupted (the page was closed). The parts already recorded are saved — continue where it stopped.",
   },
 };
@@ -237,49 +239,85 @@ function onTextChange() {
 }
 
 // ---------------------------------------------------------------- preview
-let previewAudio = null, previewSeq = 0;
+// iPhone Safari only allows sound to start inside the tap itself. A preview first waits for
+// Google, so we "unlock" one shared <audio> element during the tap (by playing a silent clip)
+// and reuse that element once the voice arrives. Previews already fetched play instantly.
+const previewEl = new Audio();
+previewEl.preload = "auto";
+const SILENCE_URL = (() => {
+  const n = 2400, b = new ArrayBuffer(44 + n * 2), v = new DataView(b);
+  const w = (o, str) => [...str].forEach((c, k) => v.setUint8(o + k, c.charCodeAt(0)));
+  w(0, "RIFF"); v.setUint32(4, 36 + n * 2, true); w(8, "WAVEfmt "); v.setUint32(16, 16, true);
+  v.setUint16(20, 1, true); v.setUint16(22, 1, true); v.setUint32(24, 24000, true); v.setUint32(28, 48000, true);
+  v.setUint16(32, 2, true); v.setUint16(34, 16, true); w(36, "data"); v.setUint32(40, n * 2, true);
+  return URL.createObjectURL(new Blob([b], { type: "audio/wav" }));
+})();
+let previewSeq = 0, playingBtn = null;
 const previewCache = new Map();
-async function preview(v, btn) {
+
+function resetPlayButtons() {
+  document.querySelectorAll(".play").forEach((b) => { b.textContent = "▶"; });
+  playingBtn = null;
+}
+previewEl.addEventListener("ended", resetPlayButtons);
+
+async function playPreview(url, btn) {
+  previewEl.src = url;
+  btn.textContent = "❚❚";
+  playingBtn = btn;
+  try {
+    await previewEl.play();
+  } catch (e) {
+    // Still blocked (very strict browser settings): the clip is ready now, so the next tap plays at once.
+    resetPlayButtons();
+    if (e.name === "NotAllowedError") showError(t("tapAgain"));
+    else throw e;
+  }
+}
+
+function preview(v, btn) {
   const seq = ++previewSeq;
-  if (previewAudio) { previewAudio.pause(); previewAudio = null; }
-  document.querySelectorAll(".play").forEach((b) => { if (b !== btn) b.textContent = "▶"; });
-  if (btn.textContent === "❚❚") { btn.textContent = "▶"; return; }
+  const wasPlaying = playingBtn === btn;
+  previewEl.pause();
+  resetPlayButtons();
+  showError("");
+  if (wasPlaying) return;                                  // second tap = stop
   if (!key()) return showError(t("needKey"));
   if (freeOpts().billing && freeOpts().freeOnly) return showError(t("paidBlocked"));
-  btn.textContent = "…";
   const ck = [v.id, state.lang, state.style, state.pace].join("|");
-  try {
-    let url = previewCache.get(ck);
-    if (!url) {
-      const blob = await A.store.getPart("preview", ck);   // previews persist: one free request each, ever
-      if (blob) url = URL.createObjectURL(blob);
-    }
+  const cached = previewCache.get(ck);
+  if (cached) return playPreview(cached, btn).catch((e) => showError(`${t("previewFail")}: ${e.message}`));
+  // Unlock the shared player while we are still inside the tap.
+  previewEl.src = SILENCE_URL;
+  previewEl.play().catch(() => {});
+  btn.textContent = "…";
+  (async () => {
+    let url;
+    const blob = await A.store.getPart("preview", ck);    // previews persist: one free request each, ever
+    if (blob) url = URL.createObjectURL(blob);
     if (!url) {
       const g = gemini();
-      const [h1, h2] = hostNames(state.lang, v.gender, v.gender === "male" ? "female" : "male");
-      const opts = { language: state.lang, style: state.style, pace: state.pace, hostNames: [h1, h2],
-        genders: [v.gender, v.gender === "male" ? "female" : "male"] };
+      const other = v.gender === "male" ? "female" : "male";
+      const opts = { language: state.lang, style: state.style, pace: state.pace,
+        hostNames: hostNames(state.lang, v.gender, other), genders: [v.gender, other] };
       const { pcm, rate } = await withRetries(() => g.synthesize(PREVIEW_TEXT[state.lang](v.gender), v.id, opts), 3);
       const { audio, kweighted } = await A.masterPart(A.trimSilence(A.resample(pcm, rate)));
       const meter = new A.LoudnessMeter();
       meter.add(kweighted);
       const enc = A.startEncoder(64);
       enc.push(new Float32Array(audio), Math.min(4, 10 ** ((-16 - meter.integratedDb()) / 20)));
-      const blob = await enc.finish();
-      await A.store.putPart("preview", ck, blob);
-      url = URL.createObjectURL(blob);
-      onTextChange();
+      const mp3 = await enc.finish();
+      await A.store.putPart("preview", ck, mp3);
+      url = URL.createObjectURL(mp3);
+      onTextChange();                                       // the free-quota badge changed
     }
     previewCache.set(ck, url);
-    if (seq !== previewSeq) return;
-    previewAudio = new Audio(url);
-    btn.textContent = "❚❚";
-    previewAudio.onended = () => { btn.textContent = "▶"; };
-    await previewAudio.play();
-  } catch (e) {
-    btn.textContent = "▶";
+    if (seq !== previewSeq) { btn.textContent = "▶"; return; }   // another voice was tapped meanwhile
+    await playPreview(url, btn);
+  })().catch((e) => {
+    if (seq === previewSeq) btn.textContent = "▶";
     showError(`${t("previewFail")}: ${e.message}`);
-  }
+  });
 }
 
 // ---------------------------------------------------------------- jobs
@@ -364,11 +402,9 @@ async function showResult(job, blob) {
   const player = $("player");
   player.src = url;
   $("result").hidden = false;
-  // The exact length is what the player itself reports for the finished file.
-  const duration = await new Promise((resolve) => {
-    player.onloadedmetadata = () => resolve(player.duration);
-    player.onerror = () => resolve(NaN);
-  });
+  // Exact length, counted from the MP3's own frames (iPhone Safari won't load the player's
+  // metadata until you press play, so we don't wait for it).
+  const duration = await A.mp3Duration(blob);
   $("resDuration").textContent = Number.isFinite(duration) ? formatDuration(duration) : "?";
   $("resMeta").textContent = `${t("size")}: \u2066${fmtSize(blob.size)}\u2069 · Gemini (${job.request.mode === "conversation" ? job.request.voice + ", " + job.request.voice2 : job.request.voice})`;
   const safe = (job.request.title || "podcast").replace(/[^\p{L}\p{N} _-]/gu, "").trim() || "podcast";
