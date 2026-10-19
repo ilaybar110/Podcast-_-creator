@@ -23,6 +23,27 @@ const I18N = {
     humanness: "מדד אנושיות", previewFail: "התצוגה המקדימה נכשלה",
     edgeNote: "קולות Microsoft החינמיים טובים בהרבה מ'כרמית', אבל לקול הכי חם ואנושי מומלץ Gemini.",
     defaultTitle: "הפודקאסט שלי",
+    resume: "המשך יצירה", freeTitle: "שמירה על מסלול חינמי",
+    freeOnly: "מצב חינם בלבד: לעולם לא לעבור את המכסה החינמית (עוצר וממשיך מחר במקום לשלם)",
+    billing: "בפרויקט Google של המפתח מוגדר חיוב (Billing)",
+    billingHint: "הכי בטוח: מפתח מפרויקט בלי חיוב — כך Google לא יכולה לחייב אתכם בכלל, ובמקרה הגרוע תקבלו הודעת \"מכסה נגמרה\".",
+    limitsHint: "המגבלות החינמיות משתנות לפי פרויקט. האפליקציה לומדת את המגבלה האמיתית מ-Google אוטומטית; אפשר גם להזין ידנית לפי",
+    ttsPerDay: "בקשות קול ליום", ttsPerMin: "בקשות קול לדקה", textPerDay: "בקשות תסריט ליום",
+    fUnlimited: "✓ <b>חינם לגמרי</b> — קולות Microsoft, ללא מכסה.",
+    fFree: "✓ <b>חינם</b> — ישתמש ב-{need} מתוך {left} בקשות קול חינמיות שנותרו היום.",
+    fFreeScript: " + {need} בקשות לכתיבת התסריט (נותרו {left}).",
+    fMinutes: "בגלל מגבלת {rpm} בקשות לדקה, היצירה תיקח לפחות ~{min} דק׳.",
+    fMulti: "⏳ <b>חינם, אבל דורש {days} ימים של מכסה חינמית.</b> היצירה תיעצר כשהמכסה תיגמר, ותוכלו להמשיך אחרי האיפוס ({reset}) — בלי לשלם.",
+    fNotFree: "✗ <b>לא חינם</b> — דורש {need} תווים, ונותרו {left} במכסה. קצרו את הטקסט או בחרו בקולות Microsoft החינמיים.",
+    fPaid: "💳 <b>בתשלום</b> — במפתח מוגדר חיוב, כך שכל בקשה עולה כסף.",
+    fPlan: "✓ <b>ללא עלות נוספת</b> — {need} תווים מתוך {left} שנותרו בקרדיטים של המנוי שלכם.",
+    fElevenFree: "✓ <b>חינם</b> — {need} תווים מתוך {left} שנותרו במכסה החודשית החינמית.",
+    fUnknown: "? לא ניתן לבדוק את המכסה החינמית למנוע הזה.",
+    fOff: " (מצב חינם בלבד כבוי — ייתכנו חיובים או שגיאות מכסה)",
+    fReserve: "כולל רזרבה של {reserve} להקלטות חוזרות.",
+    confirmMulti: "הפודקאסט הזה דורש {days} ימים של מכסה חינמית. היצירה תיעצר כשהמכסה תיגמר ותוכלו ללחוץ \"המשך יצירה\" אחרי האיפוס. להתחיל?",
+    pausedText: "המכסה החינמית להיום נגמרה, אז עצרנו כדי שלא תשלמו. החלקים שכבר הוקלטו נשמרו. אפשר להמשיך אחרי {reset}.",
+    previewCost: "השמעה לדוגמה (משתמשת בבקשה חינמית אחת בפעם הראשונה)",
   },
   en: {
     title: "Podcast Creator", subtitle: "Any text, any length — into a warm, human-sounding podcast MP3",
@@ -46,6 +67,27 @@ const I18N = {
     humanness: "Humanness score", previewFail: "Preview failed",
     edgeNote: "The free Microsoft voices beat old voices like Carmit, but Gemini gives the warmest, most human sound.",
     defaultTitle: "My podcast",
+    resume: "Continue", freeTitle: "Stay on the free tier",
+    freeOnly: "Free-only mode: never go past the free quota (pause and continue tomorrow instead of paying)",
+    billing: "The key's Google project has billing enabled",
+    billingHint: "Safest: use a key from a project with no billing. Then Google cannot charge you at all; the worst case is a 'quota exceeded' message.",
+    limitsHint: "Free limits differ per project. The app learns the real limit from Google automatically; you can also enter it from",
+    ttsPerDay: "Voice requests / day", ttsPerMin: "Voice requests / minute", textPerDay: "Script requests / day",
+    fUnlimited: "✓ <b>Completely free</b> — Microsoft voices, no quota.",
+    fFree: "✓ <b>Free</b> — uses {need} of the {left} free voice requests left today.",
+    fFreeScript: " + {need} requests to write the script ({left} left).",
+    fMinutes: "Because of the {rpm} requests/minute limit, it will take at least ~{min} min.",
+    fMulti: "⏳ <b>Free, but needs {days} days of free quota.</b> It will pause when the quota runs out and you can continue after the reset ({reset}) — without paying.",
+    fNotFree: "✗ <b>Not free</b> — needs {need} characters, only {left} left in your quota. Shorten the text or use the free Microsoft voices.",
+    fPaid: "💳 <b>Paid</b> — billing is enabled on this key, so every request costs money.",
+    fPlan: "✓ <b>No extra cost</b> — {need} of the {left} characters left in your plan's credits.",
+    fElevenFree: "✓ <b>Free</b> — {need} of the {left} characters left in your free monthly quota.",
+    fUnknown: "? Couldn't check the free quota for this engine.",
+    fOff: " (free-only mode is OFF — you may be charged or hit quota errors)",
+    fReserve: "Includes {reserve} spare for re-recording bad takes.",
+    confirmMulti: "This podcast needs {days} days of free quota. It will pause when the quota runs out and you can press \"Continue\" after the reset. Start?",
+    pausedText: "Today's free quota is used up, so we paused instead of charging you. Everything recorded so far is saved. You can continue after {reset}.",
+    previewCost: "Preview (uses one free request the first time)",
   },
 };
 const DESC_HE = {
@@ -69,6 +111,50 @@ const state = {
   busy: false, cfgSeq: 0, estSeq: 0,
 };
 const t = (k) => I18N[state.ui][k] ?? k;
+
+function fmt(s, vars) { return s.replace(/\{(\w+)\}/g, (_, k) => vars[k] ?? ""); }
+function intOrNull(v) { const n = parseInt(v, 10); return n > 0 ? n : null; }
+function freeOpts() {
+  const lim = (k) => intOrNull(store.get(k, ""));
+  const limits = {};
+  const tts = {}, txt = {};
+  if (lim("limTtsRpd")) tts.rpd = lim("limTtsRpd");
+  if (lim("limTtsRpm")) tts.rpm = lim("limTtsRpm");
+  if (lim("limTextRpd")) txt.rpd = lim("limTextRpd");
+  if (Object.keys(tts).length) limits.gemini_tts = tts;
+  if (Object.keys(txt).length) limits.gemini_text = txt;
+  return { free_only: store.get("freeOnly", "1") === "1", billing: store.get("billing", "0") === "1", limits };
+}
+function resetTime(iso) {
+  if (!iso) return "";
+  const d = new Date(iso);
+  return d.toLocaleString(state.ui === "he" ? "he-IL" : "en-US", { weekday: "short", hour: "2-digit", minute: "2-digit" });
+}
+
+function renderFree(f) {
+  const el = $("freeBadge");
+  state.free = f;
+  if (!f) { el.hidden = true; return; }
+  let cls = "ok", html = "";
+  const b = f.buckets || {};
+  const tts = b.gemini_tts, txt = b.gemini_text || f.script?.buckets?.gemini_text;
+  if (f.unlimited) html = t("fUnlimited");
+  else if (f.status === "paid") { cls = "bad"; html = t("fPaid"); }
+  else if (f.status === "unknown") { cls = "wait"; html = t("fUnknown"); }
+  else if (f.status === "not_free") { cls = "bad"; html = fmt(t("fNotFree"), { need: f.needed_chars?.toLocaleString(), left: f.left_chars?.toLocaleString() }); }
+  else if (f.status === "free_multi_day") { cls = "wait"; html = fmt(t("fMulti"), { days: f.days, reset: resetTime(f.reset_at || f.script?.reset_at) }); }
+  else if (f.engine === "elevenlabs") html = fmt(t(f.status === "plan_credits" ? "fPlan" : "fElevenFree"), { need: f.needed_chars.toLocaleString(), left: f.left_chars.toLocaleString() });
+  else if (tts) html = fmt(t("fFree"), { need: tts.needed + tts.reserve, left: tts.left_today });
+  else html = t("fUnlimited");
+  if (txt && f.status !== "paid" && f.status !== "not_free") html += fmt(t("fFreeScript"), { need: txt.needed + txt.reserve, left: txt.left_today });
+  const sub = [];
+  if (tts && tts.reserve) sub.push(fmt(t("fReserve"), { reserve: tts.reserve }));
+  if (tts && tts.minutes_at_least >= 1) sub.push(fmt(t("fMinutes"), { rpm: tts.per_minute, min: Math.ceil(tts.minutes_at_least) }));
+  if (!freeOpts().free_only && !f.unlimited && f.status !== "free") html += t("fOff");
+  el.className = "free-badge " + cls;
+  el.innerHTML = html + (sub.length ? `<div class="sub">${sub.join(" ")}</div>` : "");
+  el.hidden = false;
+}
 
 function headers() {
   const h = { "Content-Type": "application/json" };
@@ -165,9 +251,10 @@ function renderVoiceGrid(container, key) {
     card.className = "voice" + (state[key] === v.id ? " on" : "");
     card.setAttribute("role", "button");
     card.tabIndex = 0;
-    card.innerHTML = `<button class="play" title="▶" aria-label="preview">▶</button>
+    card.innerHTML = `<button class="play" aria-label="preview">▶</button>
       <div class="meta"><div class="name"></div><div class="desc"></div></div>`;
     card.querySelector(".name").textContent = v.name;
+    card.querySelector(".play").title = state.engine === "edge" ? "▶" : t("previewCost");
     if (v.recommended) {
       const s = document.createElement("span"); s.className = "star"; s.textContent = "★ " + t("recommended");
       card.querySelector(".name").appendChild(s);
@@ -217,7 +304,7 @@ async function preview(voiceId, btn) {
   try {
     const r = await fetch("/api/preview", {
       method: "POST", headers: headers(),
-      body: JSON.stringify({ language: state.lang, provider: state.engine, voice: voiceId, style: state.style, pace: state.pace }),
+      body: JSON.stringify({ language: state.lang, provider: state.engine, voice: voiceId, style: state.style, pace: state.pace, ...freeOpts() }),
     });
     if (!r.ok) throw new Error((await r.json()).detail || r.statusText);
     const blob = await r.blob();
@@ -240,16 +327,18 @@ function onTextChange() {
   estTimer = setTimeout(async () => {
     const seq = ++state.estSeq;
     const text = $("text").value;
-    if (!text.trim()) { $("statChars").textContent = "0"; $("statWords").textContent = "0"; $("statEst").textContent = "0:00"; return; }
+    if (!text.trim()) { $("statChars").textContent = "0"; $("statWords").textContent = "0"; $("statEst").textContent = "0:00"; renderFree(null); return; }
     const r = await fetch("/api/estimate", {
       method: "POST", headers: headers(),
-      body: JSON.stringify({ text, language: state.langTouched ? state.lang : null, mode: state.mode }),
+      body: JSON.stringify({ text, language: state.langTouched ? state.lang : null, mode: state.mode,
+                             provider: state.engine || "auto", ...freeOpts() }),
     });
     const d = await r.json();
     if (seq !== state.estSeq || !r.ok) return;   // a newer keystroke's estimate is coming
     $("statChars").textContent = d.chars.toLocaleString();
     $("statWords").textContent = d.words.toLocaleString();
     $("statEst").textContent = "~" + d.estimated_str;
+    renderFree(d.free);
     if (!state.langTouched && d.language !== state.lang) {
       state.lang = d.language; setSeg("langSeg", state.lang); await loadConfig();
     }
@@ -284,7 +373,10 @@ async function generate() {
   showError("");
   const text = $("text").value;
   if (!text.trim()) return showError(t("emptyText"));
+  if (state.free?.status === "free_multi_day" && freeOpts().free_only &&
+      !confirm(fmt(t("confirmMulti"), { days: state.free.days }))) return;
   $("result").hidden = true;
+  $("paused").hidden = true;
   state.busy = true;
   $("generate").disabled = true;
   $("progress").hidden = false;
@@ -296,12 +388,13 @@ async function generate() {
       body: JSON.stringify({
         text, language: state.lang, mode: state.mode, provider: state.engine, voice: state.voice,
         voice2: state.voice2, style: state.style, pace: state.pace, warm_master: $("warm").checked,
-        title: $("title").value || t("defaultTitle"),
+        title: $("title").value || t("defaultTitle"), ...freeOpts(),
       }),
     });
     const d = await readJSON(r);
     if (!r.ok) { finish(); return showError(errText(d)); }
     state.jobId = d.id;
+    store.set("lastJob", d.id);
     poll();
   } catch (err) { finish(); showError(err.message); }
 }
@@ -325,6 +418,13 @@ async function poll() {
   $("elapsed").textContent = fmtSec(j.elapsed_sec);
   if (j.status === "done") { finish(); return showResult(j); }
   if (j.status === "error" || j.status === "cancelled") { finish(); return showError(j.error || j.stage); }
+  if (j.status === "paused") {
+    finish();
+    $("pausedText").textContent = fmt(t("pausedText"), { reset: resetTime(j.resume_at) });
+    $("paused").hidden = false;
+    onTextChange();          // refresh the free-quota badge
+    return;
+  }
   state.timer = setTimeout(poll, 1500);
 }
 
@@ -358,7 +458,7 @@ async function showResult(j) {
 seg("langSeg", "lang", async () => { state.langTouched = true; state.voice = state.voice2 = ""; await loadConfig(); onTextChange(); });
 seg("modeSeg", "mode", () => { renderVoices(); updateModeHint(); onTextChange(); });
 seg("paceSeg", "pace");
-$("engine").addEventListener("change", (e) => { state.engine = e.target.value; store.set("engine", state.engine); pickDefaults(); renderVoices(); updateModeHint(); });
+$("engine").addEventListener("change", (e) => { state.engine = e.target.value; store.set("engine", state.engine); pickDefaults(); renderVoices(); updateModeHint(); onTextChange(); });
 $("text").addEventListener("input", onTextChange);
 $("fileInput").addEventListener("change", (e) => e.target.files[0] && loadFile(e.target.files[0]));
 const dz = $("dropZone");
@@ -366,6 +466,16 @@ dz.addEventListener("dragover", (e) => { e.preventDefault(); dz.classList.add("o
 dz.addEventListener("dragleave", () => dz.classList.remove("over"));
 dz.addEventListener("drop", (e) => { e.preventDefault(); dz.classList.remove("over"); e.dataTransfer.files[0] && loadFile(e.dataTransfer.files[0]); });
 $("generate").addEventListener("click", generate);
+$("resumeBtn").addEventListener("click", async () => {
+  if (!state.jobId || state.busy) return;
+  showError("");
+  const r = await fetch(`/api/jobs/${state.jobId}/resume`, { method: "POST" });
+  const d = await readJSON(r);
+  if (!r.ok) return showError(errText(d));
+  $("paused").hidden = true;
+  state.busy = true; $("generate").disabled = true; $("progress").hidden = false;
+  poll();
+});
 $("cancel").addEventListener("click", () => state.jobId && fetch(`/api/jobs/${state.jobId}/cancel`, { method: "POST" }));
 $("showScript").addEventListener("click", () => {
   $("script").hidden = !$("script").hidden;
@@ -374,12 +484,43 @@ $("showScript").addEventListener("click", () => {
 $("uiLangBtn").addEventListener("click", () => { state.ui = state.ui === "he" ? "en" : "he"; store.set("ui", state.ui); applyUI(); loadConfig(); });
 $("settingsBtn").addEventListener("click", () => {
   $("geminiKey").value = store.get("geminiKey", ""); $("elevenKey").value = store.get("elevenKey", "");
+  $("freeOnly").checked = store.get("freeOnly", "1") === "1";
+  $("billing").checked = store.get("billing", "0") === "1";
+  for (const id of ["limTtsRpd", "limTtsRpm", "limTextRpd"]) $(id).value = store.get(id, "");
+  const d = state.config?.free_defaults;
+  if (d) {
+    $("limTtsRpd").placeholder = d.gemini_tts.rpd; $("limTtsRpm").placeholder = d.gemini_tts.rpm;
+    $("limTextRpd").placeholder = d.gemini_text.rpd;
+  }
   $("settings").showModal();
 });
 $("saveKeys").addEventListener("click", () => {
   store.set("geminiKey", $("geminiKey").value.trim()); store.set("elevenKey", $("elevenKey").value.trim());
-  loadConfig();
+  store.set("freeOnly", $("freeOnly").checked ? "1" : "0");
+  store.set("billing", $("billing").checked ? "1" : "0");
+  for (const id of ["limTtsRpd", "limTtsRpm", "limTextRpd"]) store.set(id, intOrNull($(id).value) ?? "");
+  loadConfig().then(onTextChange);
 });
 
+async function restoreLastJob() {
+  // A podcast paused by the free quota survives closing the page: show it again.
+  const id = store.get("lastJob", "");
+  if (!id) return;
+  try {
+    const r = await fetch(`/api/jobs/${id}`);
+    if (!r.ok) return;
+    const j = await r.json();
+    state.jobId = id;
+    if (j.status === "paused") {
+      $("pausedText").textContent = fmt(t("pausedText"), { reset: resetTime(j.resume_at) });
+      $("paused").hidden = false;
+    } else if (j.status === "running" || j.status === "queued") {
+      state.busy = true; $("progress").hidden = false; poll();
+    } else if (j.status === "done") {
+      showResult(j);
+    }
+  } catch { /* server restarted: nothing to restore */ }
+}
+
 applyUI();
-loadConfig();
+loadConfig().then(restoreLastJob);

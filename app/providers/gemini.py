@@ -14,7 +14,7 @@ import time
 import httpx
 import numpy as np
 
-from .. import prompts
+from .. import budget, prompts
 from ..audio import pcm_from_bytes, resample
 from .base import Provider, ProviderError, SynthesisOptions, Turn, Voice
 
@@ -76,10 +76,17 @@ class GeminiProvider(Provider):
     max_chunk_chars = 1500
     supports_dialogue = True
 
-    def __init__(self, api_key: str | None = None):
+    def __init__(self, api_key: str | None = None, free_only: bool = False,
+                 limit_overrides: dict | None = None):
         self.api_key = api_key or os.getenv("GEMINI_API_KEY") or os.getenv("GOOGLE_API_KEY")
         self.concurrency = int(os.getenv("GEMINI_CONCURRENCY", "2"))
         self.timeout = httpx.Timeout(300.0, connect=20.0)
+        self.free_only = free_only
+        # Every request goes through the gate: it counts usage, and in free-only mode it also
+        # paces under the per-minute limits and refuses to pass a free daily limit.
+        self.gate = budget.Gate(self.api_key, free_only, limit_overrides)
+        if free_only:
+            self.max_chunk_chars = budget.FREE_CHUNK_CHARS   # fewer, longer requests
 
     def available(self) -> bool:
         return bool(self.api_key)
@@ -116,10 +123,14 @@ class GeminiProvider(Provider):
         _model_cache[self.api_key or ""] = (time.time(), names)
         return names
 
+    def _free_models(self, names: list[str]) -> list[str]:
+        # Pro models have no free tier: in free-only mode never pick one.
+        return [n for n in names if "pro" not in n] if self.free_only else names
+
     async def tts_model(self) -> str:
         if os.getenv("GEMINI_TTS_MODEL"):
             return os.environ["GEMINI_TTS_MODEL"]
-        names = await self._models()
+        names = self._free_models(await self._models())
         for pref in TTS_MODEL_PREFERENCE:
             if pref in names:
                 return pref
@@ -131,7 +142,7 @@ class GeminiProvider(Provider):
     async def text_model(self) -> str:
         if os.getenv("GEMINI_SCRIPT_MODEL"):
             return os.environ["GEMINI_SCRIPT_MODEL"]
-        names = await self._models()
+        names = self._free_models(await self._models())
         for pref in TEXT_MODEL_PREFERENCE:
             if pref in names:
                 return pref
@@ -143,6 +154,9 @@ class GeminiProvider(Provider):
 
     # ------------------------------------------------------------------ http
     async def _generate(self, model: str, body: dict) -> dict:
+        bucket = "gemini_tts" if "tts" in model else "gemini_text"
+        prompt = "".join(p.get("text", "") for c in body.get("contents", []) for p in c.get("parts", []))
+        await self.gate.acquire(bucket, budget.estimate_tokens(prompt))
         async with httpx.AsyncClient(timeout=self.timeout) as client:
             try:
                 r = await client.post(f"{API}/models/{model}:generateContent", json=body,
@@ -155,6 +169,10 @@ class GeminiProvider(Provider):
             err = r.json()
         except ValueError:
             err = {}
+        if r.status_code == 429:
+            quota = self.gate.quota_error(bucket, err)
+            if quota:
+                raise quota
         msg = err.get("error", {}).get("message") or r.text[:300]
         retryable = r.status_code in (429, 500, 502, 503, 504)
         raise ProviderError(f"Gemini {r.status_code}: {msg}", retryable=retryable,

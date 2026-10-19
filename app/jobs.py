@@ -14,6 +14,7 @@ import numpy as np
 
 from . import audio, quality, script_writer
 from .providers import Provider, ProviderError, SynthesisOptions, Turn, get_provider, with_retries
+from .budget import QuotaExhausted
 from .providers.gemini import GeminiProvider
 from .text_utils import chunk_text, clean_text, format_duration, split_sentences
 
@@ -21,6 +22,7 @@ log = logging.getLogger("podcast")
 
 DATA_DIR = Path(os.getenv("DATA_DIR", Path(__file__).resolve().parent.parent / "data")) / "jobs"
 JOB_TTL_SEC = float(os.getenv("JOB_TTL_HOURS", "24")) * 3600
+PAUSED_TTL_SEC = 7 * 24 * 3600   # paused (free quota) jobs wait up to a week to be continued
 MAX_TAKES = 3
 CHUNK_PAUSE_SEC = 0.75
 TURN_GAP_SEC = 0.3
@@ -39,6 +41,8 @@ class JobRequest:
     warm_master: bool = True
     title: str = "Podcast"
     keys: dict[str, str] = field(default_factory=dict)
+    free_only: bool = True          # never go past a free quota; pause instead
+    limit_overrides: dict = field(default_factory=dict)
 
 
 @dataclass
@@ -55,6 +59,7 @@ class Job:
     result: dict | None = None
     script: list[dict] | None = None
     cancelled: bool = False
+    resume_at: str | None = None     # ISO time the free quota resets, when paused
 
     @property
     def dir(self) -> Path:
@@ -64,7 +69,7 @@ class Job:
         return {
             "id": self.id, "status": self.status, "stage": self.stage,
             "progress": round(self.progress, 4), "error": self.error, "warnings": self.warnings[-10:],
-            "result": self.result, "has_script": bool(self.script),
+            "result": self.result, "has_script": bool(self.script), "resume_at": self.resume_at,
             "elapsed_sec": round((self.finished or time.time()) - self.created, 1),
         }
 
@@ -81,15 +86,24 @@ def create_job(req: JobRequest) -> Job:
     return job
 
 
+def resume_job(job: Job) -> Job:
+    """Continue a job paused by the free quota; parts already recorded are kept."""
+    job.status, job.stage, job.error, job.resume_at = "queued", "Continuing", None, None
+    job.cancelled, job.finished = False, None
+    job.task = asyncio.create_task(run_job(job))
+    return job
+
+
 def cleanup_old() -> None:
     now = time.time()
     for jid, job in list(JOBS.items()):
-        if job.finished and now - job.finished > JOB_TTL_SEC:
+        ttl = PAUSED_TTL_SEC if job.status == "paused" else JOB_TTL_SEC
+        if job.finished and now - job.finished > ttl:
             shutil.rmtree(job.dir, ignore_errors=True)
             JOBS.pop(jid, None)
     if DATA_DIR.exists():
         for d in DATA_DIR.iterdir():
-            if d.name not in JOBS and now - d.stat().st_mtime > JOB_TTL_SEC:
+            if d.name not in JOBS and now - d.stat().st_mtime > PAUSED_TTL_SEC:
                 shutil.rmtree(d, ignore_errors=True)
 
 
@@ -159,12 +173,23 @@ def host_names(language: str, g1: str | None, g2: str | None) -> tuple[str, str]
     return first, pool[1] if pool[0] == first else pool[0]
 
 
+def _part_path(job: Job, i: int) -> Path:
+    return job.dir / "parts" / f"{i:05d}.pcm"
+
+
 def _save_part(job: Job, i: int, pcm: np.ndarray) -> Path:
-    """Parts go to disk so book-length podcasts don't have to fit in memory."""
-    path = job.dir / "parts" / f"{i:05d}.pcm"
+    """Parts go to disk so book-length podcasts don't have to fit in memory, and so a job
+    paused by the free quota can continue later without paying for the same audio twice."""
+    path = _part_path(job, i)
     path.parent.mkdir(exist_ok=True)
-    path.write_bytes(audio.fade(pcm).astype("<i2").tobytes())
+    tmp = path.with_suffix(".tmp")
+    tmp.write_bytes(audio.fade(pcm).astype("<i2").tobytes())
+    tmp.replace(path)               # atomic: a half-written part is never mistaken for done
     return path
+
+
+def _waiting(job: Job, seconds: float) -> None:
+    job.stage = f"Staying within the free tier: waiting {int(seconds)}s for the per-minute limit"
 
 
 def _assemble(mp3_path: Path, segments: list[tuple[Path, float]], warm: bool, title: str) -> np.ndarray:
@@ -191,7 +216,9 @@ async def run_job(job: Job) -> None:
     try:
         audio.require_ffmpeg()
         job.status = "running"
-        provider = get_provider(req.provider, req.keys)
+        provider = get_provider(req.provider, req.keys, req.free_only, req.limit_overrides)
+        if isinstance(provider, GeminiProvider):
+            provider.gate.on_wait = lambda s: _waiting(job, s)
         text = clean_text(req.text)
         if not text:
             raise ProviderError("The text is empty after cleanup.")
@@ -231,6 +258,10 @@ async def run_job(job: Job) -> None:
             "metrics": metrics.to_dict(),
         }
         job.status, job.stage, job.progress = "done", "Ready", 1.0
+    except QuotaExhausted as e:
+        job.status, job.resume_at = "paused", e.reset_at.isoformat()
+        job.stage = "Paused: today's free quota is used up"
+        job.error = str(e)
     except (Cancelled, asyncio.CancelledError):
         job.status, job.stage = "cancelled", "Cancelled"
     except ProviderError as e:
@@ -260,6 +291,11 @@ async def _run_parallel(job: Job, provider: Provider, units: list, worker, start
     tasks = [asyncio.create_task(run(i, u)) for i, u in enumerate(units)]
     try:
         await asyncio.gather(*tasks)
+    except QuotaExhausted:
+        # Requests already in flight were counted against the quota: let them finish and be
+        # saved, so continuing tomorrow doesn't pay for them again.
+        await asyncio.gather(*tasks, return_exceptions=True)
+        raise
     except BaseException:
         for t in tasks:
             t.cancel()
@@ -284,6 +320,8 @@ async def _narrator_segments(job, provider, text, opts, voice):
         return pcm
 
     async def worker(i, paras):
+        if _part_path(job, i).exists():
+            return _part_path(job, i)
         return _save_part(job, i, await speak("\n\n".join(paras), f"Part {i + 1}"))
 
     pcms = await _run_parallel(job, provider, chunks, worker, 0.02, 0.94)
@@ -291,7 +329,9 @@ async def _narrator_segments(job, provider, text, opts, voice):
 
 
 async def _conversation_segments(job, provider, text, opts, v1, v2):
-    gemini = provider if isinstance(provider, GeminiProvider) else GeminiProvider(job.request.keys.get("gemini"))
+    req = job.request
+    gemini = provider if isinstance(provider, GeminiProvider) else \
+        GeminiProvider(req.keys.get("gemini"), free_only=req.free_only, limit_overrides=req.limit_overrides)
     if not gemini.available():
         raise ProviderError("Two-host conversation mode needs a Gemini API key to write the script.")
     job.stage = "Writing the two-host script"
@@ -300,8 +340,11 @@ async def _conversation_segments(job, provider, text, opts, v1, v2):
         job.progress = 0.02 + 0.25 * i / n
         job.stage = f"Writing the two-host script: part {i} of {n}"
 
-    turns = await script_writer.write_dialogue(gemini, text, opts.language, opts.host_names, on_progress,
-                                               opts.genders)
+    if job.script:      # resuming: the script was already written (and paid for in quota)
+        turns = [Turn(t["speaker"], t["text"]) for t in job.script]
+    else:
+        turns = await script_writer.write_dialogue(gemini, text, opts.language, opts.host_names,
+                                                   on_progress, opts.genders)
     job.script = [{"speaker": t.speaker, "text": t.text} for t in turns]
     a, b = opts.host_names
     voices = {a: v1, b: v2}
@@ -321,12 +364,16 @@ async def _conversation_segments(job, provider, text, opts, v1, v2):
             return pcm
 
         async def worker(i, batch: list[Turn]):
+            if _part_path(job, i).exists():
+                return _part_path(job, i)
             return _save_part(job, i, await speak(batch, f"Part {i + 1}"))
 
         pcms = await _run_parallel(job, provider, batches, worker, 0.28, 0.68)
         return [(p, TURN_GAP_SEC + 0.1) for p in pcms]
 
     async def worker(i, turn: Turn):
+        if _part_path(job, i).exists():
+            return _part_path(job, i)
         pcm, problems = await best_take(lambda: provider.synthesize(turn.text, voices[turn.speaker], opts),
                                         turn.text, opts.language, job, f"Line {i + 1}")
         if _truncated(problems):

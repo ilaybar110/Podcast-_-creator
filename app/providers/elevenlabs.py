@@ -49,6 +49,15 @@ class ElevenLabsProvider(Provider):
         _voice_cache[self.api_key or ""] = (time.time(), out)
         return out
 
+    def subscription(self) -> dict | None:
+        """Exact character quota of the account (free plan: about 10k credits a month)."""
+        try:
+            r = httpx.get(f"{API}/user/subscription", headers={"xi-api-key": self.api_key}, timeout=20)
+            r.raise_for_status()
+            return r.json()
+        except httpx.HTTPError:
+            return None
+
     async def synthesize(self, text: str, voice: str, opts: SynthesisOptions) -> np.ndarray:
         if not re.fullmatch(r"[A-Za-z0-9]{8,40}", voice or ""):
             raise ProviderError("Invalid ElevenLabs voice id")

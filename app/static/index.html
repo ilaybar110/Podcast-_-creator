@@ -43,6 +43,7 @@
       <span><b id="statWords">0</b> <span data-i18n="words">מילים</span></span>
       <span class="est"><span data-i18n="estimate">אורך משוער</span>: <b id="statEst">0:00</b></span>
     </div>
+    <div id="freeBadge" class="free-badge" hidden></div>
   </section>
 
   <section class="card">
@@ -116,6 +117,10 @@
       <button class="ghost small" id="cancel" data-i18n="cancel">ביטול</button>
     </div>
     <div id="error" class="error" hidden></div>
+    <div id="paused" class="paused" hidden>
+      <p id="pausedText"></p>
+      <button class="primary" id="resumeBtn" data-i18n="resume">המשך יצירה</button>
+    </div>
   </section>
 
   <section class="card result" id="result" hidden>
@@ -143,6 +148,18 @@
     <input id="geminiKey" type="password" dir="ltr" autocomplete="off">
     <label>ElevenLabs API key</label>
     <input id="elevenKey" type="password" dir="ltr" autocomplete="off">
+
+    <h3 data-i18n="freeTitle">שמירה על מסלול חינמי</h3>
+    <label class="check"><input type="checkbox" id="freeOnly" checked> <span data-i18n="freeOnly">מצב חינם בלבד: לעולם לא לעבור את המכסה החינמית (עוצר וממשיך מחר במקום לשלם)</span></label>
+    <label class="check"><input type="checkbox" id="billing"> <span data-i18n="billing">בפרויקט Google של המפתח מוגדר חיוב (Billing)</span></label>
+    <p class="hint" data-i18n="billingHint">הכי בטוח: מפתח מפרויקט בלי חיוב — כך Google לא יכולה לחייב אתכם בכלל, ובמקרה הגרוע תקבלו הודעת "מכסה נגמרה".</p>
+    <p class="hint"><span data-i18n="limitsHint">המגבלות החינמיות משתנות לפי פרויקט. האפליקציה לומדת את המגבלה האמיתית מ-Google אוטומטית; אפשר גם להזין ידנית לפי</span>
+      <a href="https://aistudio.google.com/rate-limit" target="_blank" rel="noopener">aistudio.google.com/rate-limit</a></p>
+    <div class="limits">
+      <label><span data-i18n="ttsPerDay">בקשות קול ליום</span><input id="limTtsRpd" type="number" min="1" dir="ltr"></label>
+      <label><span data-i18n="ttsPerMin">בקשות קול לדקה</span><input id="limTtsRpm" type="number" min="1" dir="ltr"></label>
+      <label><span data-i18n="textPerDay">בקשות תסריט ליום</span><input id="limTextRpd" type="number" min="1" dir="ltr"></label>
+    </div>
     <div class="actions">
       <button class="primary" id="saveKeys" value="save" data-i18n="save">שמירה</button>
     </div>

@@ -9,22 +9,30 @@ from .gemini import GeminiProvider
 PROVIDER_CLASSES = {"gemini": GeminiProvider, "elevenlabs": ElevenLabsProvider, "edge": EdgeProvider}
 
 
-def get_provider(name: str | None, keys: dict[str, str] | None = None) -> Provider:
+def make_provider(name: str, keys: dict[str, str], free_only: bool = False,
+                  overrides: dict | None = None) -> Provider:
+    cls = PROVIDER_CLASSES[name]
+    if cls is GeminiProvider:
+        return cls(keys.get(name), free_only=free_only, limit_overrides=overrides)
+    return cls() if name == "edge" else cls(keys.get(name))
+
+
+def get_provider(name: str | None, keys: dict[str, str] | None = None, free_only: bool = False,
+                 overrides: dict | None = None) -> Provider:
     keys = keys or {}
     if name and name != "auto":
-        cls = PROVIDER_CLASSES.get(name)
-        if not cls:
+        if name not in PROVIDER_CLASSES:
             raise ProviderError(f"Unknown engine '{name}'")
-        p = cls(keys.get(name)) if name != "edge" else cls()
+        p = make_provider(name, keys, free_only, overrides)
         if not p.available():
             raise ProviderError(f"Engine '{name}' is not configured (missing API key).")
         return p
-    for n, cls in PROVIDER_CLASSES.items():
-        p = cls(keys.get(n)) if n != "edge" else cls()
+    for n in PROVIDER_CLASSES:
+        p = make_provider(n, keys, free_only, overrides)
         if p.available():
             return p
     raise ProviderError("No TTS engine available. Set GEMINI_API_KEY or install edge-tts.")
 
 
 __all__ = ["Provider", "ProviderError", "SynthesisOptions", "Turn", "Voice", "with_retries",
-           "get_provider", "PROVIDER_CLASSES", "GeminiProvider", "ElevenLabsProvider", "EdgeProvider"]
+           "get_provider", "make_provider", "PROVIDER_CLASSES", "GeminiProvider", "ElevenLabsProvider", "EdgeProvider"]

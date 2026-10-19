@@ -137,3 +137,19 @@ dialog .actions { margin-top: 18px; }
   select, input[type=text] { min-width: 0; }
   .top { flex-direction: column; align-items: flex-start; }
 }
+
+.free-badge { margin-top: 12px; padding: 10px 14px; border-radius: 12px; font-size: 14px; line-height: 1.5; border: 1px solid var(--line); }
+.free-badge b { font-weight: 700; }
+.free-badge.ok { background: color-mix(in srgb, var(--ok) 12%, transparent); border-color: color-mix(in srgb, var(--ok) 40%, transparent); }
+.free-badge.wait { background: color-mix(in srgb, #d99a00 14%, transparent); border-color: color-mix(in srgb, #d99a00 45%, transparent); }
+.free-badge.bad { background: color-mix(in srgb, var(--err) 10%, transparent); border-color: color-mix(in srgb, var(--err) 40%, transparent); }
+.free-badge .sub { color: var(--muted); font-size: 13px; }
+.paused { margin-top: 14px; padding: 14px; border-radius: 12px; background: color-mix(in srgb, #d99a00 12%, transparent); }
+.paused p { margin: 0 0 10px; }
+dialog h3 { margin: 22px 0 4px; font-size: 16px; }
+dialog .check { display: flex; gap: 8px; align-items: flex-start; font-weight: 400; }
+dialog .check input { margin-top: 5px; }
+.limits { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
+.limits label { margin: 0; font-size: 12.5px; font-weight: 600; }
+.limits input { width: 100%; min-width: 0; font: inherit; padding: 7px 9px; border-radius: 10px; border: 1px solid var(--line); background: var(--bg); color: var(--ink); }
+@media (max-width: 560px) { .limits { grid-template-columns: 1fr; } }

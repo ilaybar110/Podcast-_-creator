@@ -163,7 +163,7 @@ def wait(client, jid, timeout=60):
     end = time.time() + timeout
     while time.time() < end:
         j = client.get(f"/api/jobs/{jid}").json()
-        if j["status"] in ("done", "error", "cancelled"):
+        if j["status"] in ("done", "error", "cancelled", "paused"):
             return j
         time.sleep(0.2)
     raise AssertionError("job timed out")
@@ -265,3 +265,111 @@ def test_cancel_stops_job(client, monkeypatch):
     client.post(f"/api/jobs/{jid}/cancel")
     t0 = time.time()
     assert wait(client, jid, timeout=5)["status"] == "cancelled" and time.time() - t0 < 5
+
+
+# ------------------------------------------------------------ free tier guard
+from app import budget  # noqa: E402
+
+
+@pytest.fixture
+def ledger(tmp_path, monkeypatch):
+    led = budget.Ledger(tmp_path / "usage.json")
+    monkeypatch.setattr(budget, "LEDGER", led)
+    return led
+
+
+def test_free_verdict_counts_requests(ledger):
+    chunk = budget.FREE_CHUNK_CHARS
+    v = budget.gemini_verdict(chunk * 5, "narrator", "k", None, billing=False)
+    b = v["buckets"]["gemini_tts"]
+    assert v["status"] == "free" and b["needed"] == 5 and b["left_today"] == 15
+    assert "gemini_text" not in v["buckets"]
+    # 40 requests at 15/day -> spans days, still free
+    v = budget.gemini_verdict(chunk * 40, "narrator", "k", None, billing=False)
+    assert v["status"] == "free_multi_day" and v["days"] == 4
+    # usage already spent today is taken into account
+    for _ in range(12):
+        ledger.record(budget.key_id("k"), "gemini_tts", 10)
+    assert budget.gemini_verdict(chunk * 5, "narrator", "k", None, False)["status"] == "free_multi_day"
+    # user override of the daily limit
+    v = budget.gemini_verdict(chunk * 5, "narrator", "k", {"gemini_tts": {"rpd": 100}}, False)
+    assert v["status"] == "free" and v["buckets"]["gemini_tts"]["left_today"] == 88
+    # conversation mode also needs script-writing requests
+    v = budget.gemini_verdict(13000, "conversation", "other", None, False)
+    assert v["buckets"]["gemini_text"]["needed"] == 3
+    assert budget.gemini_verdict(100, "narrator", "k", None, billing=True)["status"] == "paid"
+
+
+def test_gate_blocks_past_daily_limit_and_learns_from_google(ledger):
+    gate = budget.Gate("key", free_only=True, overrides={"gemini_tts": {"rpd": 2, "rpm": 100}})
+    asyncio.run(gate.acquire("gemini_tts", 10))
+    asyncio.run(gate.acquire("gemini_tts", 10))
+    with pytest.raises(budget.QuotaExhausted):
+        asyncio.run(gate.acquire("gemini_tts", 10))
+    # Google's real 429 tells us the true limit
+    gate2 = budget.Gate("key2", free_only=True)
+    err = {"error": {"code": 429, "details": [{"@type": "type.googleapis.com/google.rpc.QuotaFailure",
+           "violations": [{"quotaId": "GenerateRequestsPerDayPerProjectPerModel-FreeTier", "quotaValue": "10"}]}]}}
+    assert isinstance(gate2.quota_error("gemini_tts", err), budget.QuotaExhausted)
+    assert ledger.limits(budget.key_id("key2"), "gemini_tts")["rpd"] == 10
+    with pytest.raises(budget.QuotaExhausted):
+        asyncio.run(gate2.acquire("gemini_tts", 10))
+    minute = {"error": {"details": [{"violations": [
+        {"quotaId": "GenerateRequestsPerMinutePerProjectPerModel-FreeTier", "quotaValue": "5"}]}]}}
+    assert gate2.quota_error("gemini_tts", minute) is None
+    assert ledger.limits(budget.key_id("key2"), "gemini_tts")["rpm"] == 5
+
+
+def test_gate_paces_under_rpm(ledger, monkeypatch):
+    clock = [1000.0]
+    waits = []
+
+    async def fake_sleep(s):
+        waits.append(s)
+        clock[0] += s
+
+    monkeypatch.setattr(budget.time, "time", lambda: clock[0])
+    monkeypatch.setattr(budget.asyncio, "sleep", fake_sleep)
+    gate = budget.Gate("k3", free_only=True, overrides={"gemini_tts": {"rpm": 3}})
+
+    async def go():
+        for _ in range(4):
+            await gate.acquire("gemini_tts", 10)
+    asyncio.run(go())
+    assert len(waits) == 1 and 59 < waits[0] < 62     # 4th request waits for the minute window
+
+
+def test_job_pauses_on_quota_and_resumes_without_repaying(client, ledger, monkeypatch):
+    budget_calls = {"n": 0, "limit": 3}
+
+    async def quota_synth(self, text, voice, opts):
+        budget_calls["n"] += 1
+        if budget_calls["n"] > budget_calls["limit"]:
+            raise budget.QuotaExhausted("used up", budget.next_reset())
+        return speechlike(len(text) / 13.0)
+
+    monkeypatch.setattr(FakeProvider, "synthesize", quota_synth)
+    monkeypatch.setattr(FakeProvider, "concurrency", 1)
+    text = "\n\n".join(f"פסקה {i}. " + "מילים רבות בפסקה הזאת לבדיקה. " * 8 for i in range(6))
+    n_parts = len(chunk_text(clean_text(text), FakeProvider.max_chunk_chars))
+    assert n_parts > 3
+    j = wait(client, client.post("/api/jobs", json={"text": text, "provider": "fake"}).json()["id"])
+    assert j["status"] == "paused" and j["resume_at"]
+    budget_calls["limit"] = 10**6
+    calls_before = budget_calls["n"]
+    r = client.post(f"/api/jobs/{j['id']}/resume")
+    assert r.status_code == 200
+    j = wait(client, j["id"])
+    assert j["status"] == "done", j
+    assert budget_calls["n"] - calls_before == n_parts - 3      # finished parts were not re-recorded
+
+
+def test_estimate_and_start_report_free_status(client, ledger):
+    d = client.post("/api/estimate", json={"text": "שלום עולם. " * 50, "provider": "fake"}).json()
+    assert d["free"]["status"] == "free"
+    d = client.post("/api/estimate", json={"text": "שלום עולם. " * 50, "provider": "gemini"},
+                    headers={"X-Gemini-Key": "k"}).json()
+    assert d["free"]["status"] == "free" and d["free"]["buckets"]["gemini_tts"]["needed"] == 1
+    r = client.post("/api/jobs", json={"text": "שלום", "provider": "gemini", "billing": True},
+                    headers={"X-Gemini-Key": "k"})
+    assert r.status_code == 402
