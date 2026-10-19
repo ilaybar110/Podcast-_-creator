@@ -135,3 +135,17 @@ function client(fetchFn, opts = {}) {
 }
 
 console.log("web gemini tests passed");
+
+// errors carry a message key (the UI renders it in the current language) next to the English text
+{
+  const key = (status, text) => client(async () => fail(status, text)).g.generate("gemini-2.5-flash", BODY).catch((e) => e.msg);
+  assert.deepEqual(await key(403, "denied"), { key: "e_badKey" });
+  assert.deepEqual(await key(400, "API key not valid. Please pass a valid API key."), { key: "e_badKey" });
+  assert.deepEqual(await key(400, "bad request"), { key: "e_http", status: 400 });
+  assert.deepEqual(await key(503, "overloaded"), { key: "e_server", status: 503 });
+  assert.deepEqual(await key(429, "slow down"), { key: "e_rate" });
+  const net = await client(async () => { throw new TypeError("Failed to fetch"); }).g.generate("gemini-2.5-flash", BODY).catch((e) => e);
+  assert.equal(net.msg.key, "e_network");
+  assert.match(net.message, /Failed to fetch/);
+}
+console.log("web gemini message keys ok");

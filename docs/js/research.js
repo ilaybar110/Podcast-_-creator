@@ -152,7 +152,7 @@ async function researchJson(raw, gemini) {
   if (d?.angles?.length) return d;
   const fixed = parseJson(await gemini.writeText("Rewrite the following as ONE valid JSON object with the keys title, " +
     "summary, angles (list of {title, description}) and notes. Keep all the content and language. Output only the JSON.\n\n" + raw));
-  if (!fixed?.angles?.length) throw new ProviderError("The research came back in an unexpected format. Try again.");
+  if (!fixed?.angles?.length) throw new ProviderError("The research came back in an unexpected format. Try again.", { msg: { key: "e_researchFormat" } });
   return fixed;
 }
 const noFreeSearch = (e) => e instanceof QuotaExhausted || (e instanceof ProviderError && !e.retryable);
@@ -180,7 +180,7 @@ export function cleanNarration(raw) {
  */
 export async function research(topic, language, gemini, { fetchFn } = {}) {
   topic = topic.trim();
-  if (!topic) throw new ProviderError("Write a topic first.");
+  if (!topic) throw new ProviderError("Write a topic first.", { msg: { key: "e_needTopic" } });
   const wiki = await wikipedia(topic, language, fetchFn);
   let res = null, searched = true;
   try {
@@ -188,7 +188,7 @@ export async function research(topic, language, gemini, { fetchFn } = {}) {
   } catch (e) {
     // No free Google Search today (or on this key): research from Wikipedia instead.
     if (!noFreeSearch(e)) throw e;
-    if (!wiki.length) throw e instanceof QuotaExhausted ? e : new ProviderError(`Could not find sources: ${e.message}`);
+    if (!wiki.length) throw e instanceof QuotaExhausted ? e : new ProviderError(`Could not find sources: ${e.message}`, { msg: e.msg || { key: "e_noSources" } });
     searched = false;
   }
   const raw = res ? res.text : await withRetries(() => gemini.writeText(researchPrompt(topic, language, wiki, false)), 3);
@@ -213,7 +213,7 @@ export async function writeTopicScript(job, gemini, ui, opts, saveJob) {
   const stop = () => { if (ui.cancelled?.()) throw new Cancelled(); };
   if (!job.deep) {
     stop();
-    ui.progress(0.02, "Researching your focus in depth");
+    ui.progress(0.02, { key: "p_researchDeep" });
     try {
       const r = await withRetries(() => gemini.searchText(deepDivePrompt(tp.topic, focus, tp.notes, req.language, parts)), 3);
       const d = parseJson(r.text) || { notes: r.text };
@@ -221,7 +221,7 @@ export async function writeTopicScript(job, gemini, ui, opts, saveJob) {
     } catch (e) {
       if (!noFreeSearch(e)) throw e;          // a passing network error: nothing saved, a retry searches again
       job.deep = { notes: "", outline: [], sources: [] };        // the first research is enough
-      job.warnings.push("Deep-dive search was unavailable, so the script uses the first research only.");
+      job.warnings.push({ key: "w_deepOff" });
     }
     job.sources = mergeSources(tp.sources, job.deep.sources);
     await saveJob(job);
@@ -231,7 +231,7 @@ export async function writeTopicScript(job, gemini, ui, opts, saveJob) {
   job.written ||= [];
   for (let i = job.written.length; i < parts; i++) {
     stop();
-    ui.progress(0.04 + 0.2 * i / parts, `Writing the script: part ${i + 1} of ${parts}`);
+    ui.progress(0.04 + 0.2 * i / parts, { key: "p_writeScript", n: i + 1, total: parts });
     const prev = job.written.flat();
     const tail = req.mode === "conversation"
       ? prev.slice(-6).map((t) => `${t.speaker}: ${t.text}`).join("\n")
@@ -244,12 +244,12 @@ export async function writeTopicScript(job, gemini, ui, opts, saveJob) {
       if (req.mode === "conversation") {
         const t = parseDialogue(raw, opts.hostNames);
         if (t.length < 2 || new Set(t.map((x) => x.speaker)).size < 2) {
-          throw new ProviderError("Script writer returned an unusable dialogue", { retryable: true });
+          throw new ProviderError("Script writer returned an unusable dialogue", { retryable: true, msg: { key: "e_badDialogue" } });
         }
         return t;
       }
       const text = cleanNarration(raw);
-      if (text.length < 200) throw new ProviderError("Script writer returned too little text", { retryable: true });
+      if (text.length < 200) throw new ProviderError("Script writer returned too little text", { retryable: true, msg: { key: "e_tooLittle" } });
       return text.split("\n\n").map((p) => ({ speaker: "", text: p }));
     }, 4);
     job.written.push(piece);

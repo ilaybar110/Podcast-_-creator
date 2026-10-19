@@ -71,7 +71,7 @@ const I18N = {
     topicHintOff: "האפליקציה תחפש מקורות ב-Google ובוויקיפדיה. מצב חינמי-בלבד כבוי, ולכן ייתכן שהחיפוש יעלה כסף.",
     interruptedText: "היצירה נקטעה (הדף נסגר). החלקים שכבר הוקלטו שמורים — אפשר להמשיך מאיפה שעצרנו.",
     cantResume: "אי אפשר להמשיך את היצירה הזו — צרו את הפודקאסט מחדש.",
-    errorText: "היצירה נעצרה בגלל שגיאה: {error} החלקים שכבר הוקלטו שמורים — אפשר לנסות להמשיך מאיפה שעצרנו.",
+    errorText: "היצירה נעצרה בגלל שגיאה. החלקים שכבר הוקלטו שמורים — אפשר לנסות להמשיך מאיפה שעצרנו.",
     noStorage: "הדפדפן לא מאפשר שמירה במכשיר (אולי גלישה פרטית), אז היצירה תרוץ בזיכרון בלבד: אי אפשר יהיה לעצור ולהמשיך אחר כך. השאירו את הדף פתוח עד הסוף.",
     voiceStyle: "קול וסגנון", change: "שינוי", done: "סגירה", close: "סגירה",
     share: "שיתוף / שמירה בקבצים", shareFail: "השיתוף נכשל", playSample: "השמעת דוגמה של {name}",
@@ -80,8 +80,68 @@ const I18N = {
     lockWarn: "<b>אל תנעלו את המסך ואל תעברו לאפליקציה אחרת</b> עד שהפודקאסט מוכן — המסך נשמר דלוק בזמן היצירה.",
     lockWarnNoWake: "<b>אל תנעלו את המסך ואל תעברו לאפליקציה אחרת</b> עד שהפודקאסט מוכן. הדפדפן הזה לא תומך בשמירת המסך דלוק, אז כדאי להקיש על המסך מדי פעם.",
     lockEtaMin: "זמן יצירה משוער: לפחות ~{min} דק׳.", lockEtaLen: "אורך הפודקאסט המשוער: ~{len}. היצירה אורכת כמה דקות.",
-    stalledText: "היצירה נעצרה כשהמסך ננעל או שעברתם לאפליקציה אחרת.",
     infoFree: "✓ חינם", infoMulti: "⏳ כמה ימים", infoPaid: "💳 בתשלום", infoLen: "~{len}",
+    // ---- messages produced outside app.js (job.js, research.js, gemini.js, audio.js): {key, ...values}
+    secUnit: "שנ׳", errDetails: "פרטים טכניים",
+    p_researchDeep: "חוקרים לעומק את הכיוון שבחרתם…",
+    p_writeScript: "כותבים את התסריט: חלק {n} מתוך {total}",
+    p_writeTwoHost: "כותבים את תסריט השיחה בין שני המגישים: חלק {n} מתוך {total}",
+    p_recording: "מקליטים את הקול: חלק {n} מתוך {total}",
+    p_recordingReused: "מקליטים את הקול: חלק {n} מתוך {total} ({reused} נלקחו מהקלטות קודמות, בלי מכסה)",
+    p_mastering: "משפרים את השמע (חמימות ועוצמה אחידה)",
+    p_encoding: "מקודדים ל-MP3",
+    p_waitMinute: "נשארים במסגרת החינמית: ממתינים {s} שניות למגבלת הבקשות לדקה",
+    p_waitOffline: "אין חיבור לאינטרנט: ממתינים שהחיבור יחזור",
+    w_best1: "חלק {n}: נשמרה ההקלטה מהניסיון היחיד (בעיה: {problems}).",
+    w_best: "חלק {n}: נשמרה ההקלטה הטובה ביותר מתוך {takes} ניסיונות (בעיה: {problems}).",
+    w_earlier: "חלק {n}: נשמרה הקלטה קודמת כי לא נשארה מכסה להקלטה חוזרת (בעיה: {problems}).",
+    w_reused1: "הקלטה אחת נלקחה מפודקאסט קודם, בלי שימוש במכסה.",
+    w_reused: "{count} הקלטות נלקחו מפודקאסטים קודמים, בלי שימוש במכסה.",
+    w_deepOff: "החיפוש המעמיק ברשת לא היה זמין, ולכן התסריט מבוסס על המחקר הראשוני בלבד.",
+    pr_short: "ההקלטה נקטעה באמצע: {got} שנ׳ במקום כ-{exp}",
+    pr_long: "ההקלטה ארוכה מהצפוי: {got} שנ׳ במקום כ-{exp}",
+    pr_dead: "שקט ממושך של {secs} שנ׳",
+    e_unknown: "אירעה שגיאה לא צפויה.",
+    e_stalled: "היצירה נעצרה כשהמסך ננעל או שעברתם לאפליקציה אחרת.",
+    e_badKey: "<bdi>Google</bdi> דחתה את מפתח ה-API.",
+    e_listModels: "לא הצלחנו לקבל מ-<bdi>Gemini</bdi> את רשימת הדגמים (שגיאה {status}).",
+    e_noTts: "למפתח הזה אין גישה לדגם קול חינמי.",
+    e_noText: "למפתח הזה אין דגם טקסט זמין לכתיבת התסריט.",
+    e_noSearch: "למפתח הזה אין דגם עם חיפוש <bdi>Google</bdi> חינמי.",
+    e_timeout: "<bdi>Gemini</bdi> לא ענה תוך {s} שניות.",
+    e_network: "הייתה בעיית רשת בתקשורת עם <bdi>Gemini</bdi>.",
+    e_unreadable: "<bdi>Gemini</bdi> החזיר תשובה שאי אפשר לקרוא.",
+    e_rate: "נשלחו יותר מדי בקשות ל-<bdi>Gemini</bdi> בזמן קצר.",
+    e_server: "השרת של <bdi>Gemini</bdi> נתקל בתקלה (שגיאה {status}).",
+    e_http: "<bdi>Gemini</bdi> החזיר שגיאה {status}.",
+    e_noAudio: "<bdi>Gemini</bdi> לא החזיר שמע לקטע הזה.",
+    e_contentFilter: "<bdi>Gemini</bdi> סירב להקריא את הקטע (מסנן תוכן).",
+    e_emptyScript: "<bdi>Gemini</bdi> החזיר תסריט ריק.",
+    e_searchEmpty: "חיפוש <bdi>Google</bdi> החזיר תשובה ריקה.",
+    e_quotaDay: "המכסה החינמית להיום ב-<bdi>Gemini</bdi> ({n} בקשות) נגמרה.",
+    e_quotaGoogle: "<bdi>Google</bdi> מדווחת שהמכסה החינמית להיום לדגם הזה נגמרה ({n} בקשות ליום).",
+    e_retakeLater: "המכסה של היום נחוצה להמשך הפודקאסט, אז ההקלטה החוזרת תתבצע אחרי האיפוס.",
+    e_emptyText: "הטקסט ריק אחרי הניקוי.",
+    e_badDialogue: "כותב התסריט החזיר שיחה שאי אפשר להשתמש בה.",
+    e_tooLittle: "כותב התסריט החזיר מעט מדי טקסט.",
+    e_researchFormat: "המחקר חזר בפורמט לא צפוי.",
+    e_noSources: "לא הצלחנו למצוא מקורות לנושא הזה.",
+    e_needTopic: "כתבו נושא קודם.",
+    e_neverTruncated: "חלק {n}: מנוע הקול ממשיך לקטוע את הקטע הזה, ולכן הוא לא הוקלט במלואו.",
+    e_usedRetakes: "חלק {n}: הקטע ניצל את כל ההקלטות החוזרות שמותר לו לעכשיו.",
+    e_storageBlocked: "אחסון הדפדפן חסום על ידי לשונית אחרת.",
+    e_storageFull: "אין מספיק מקום באחסון של המכשיר.",
+    e_encoder: "קידוד ה-MP3 נכשל.",
+    s_key: "בדקו את המפתח בהגדרות.",
+    s_retry: "נסו שוב.",
+    s_retryWait: "המתינו דקה ונסו שוב.",
+    s_edit: "ערכו את הקטע ונסו שוב.",
+    s_online: "בדקו את החיבור לאינטרנט ונסו שוב.",
+    s_resume: "לחצו \"המשך יצירה\" כדי לנסות שוב, או בחרו קול אחר.",
+    s_reset: "אפשר להמשיך אחרי איפוס המכסה.",
+    s_space: "פנו מקום במכשיר ונסו שוב.",
+    s_tabs: "סגרו לשוניות אחרות של האתר ונסו שוב.",
+    s_keepOpen: "השאירו את המסך דלוק ולחצו \"המשך יצירה\".",
   },
   en: {
     title: "Podcast Creator", subtitle: "Any text, any length — into a warm, human-sounding podcast MP3",
@@ -146,7 +206,7 @@ const I18N = {
     topicHintOff: "The app searches Google and Wikipedia for sources. Free-only mode is OFF, so searching may cost money.",
     interruptedText: "Recording was interrupted (the page was closed). The parts already recorded are saved — continue where it stopped.",
     cantResume: "This podcast can't be continued — please create it again.",
-    errorText: "Recording stopped because of an error: {error} The parts already recorded are saved — you can try to continue where it stopped.",
+    errorText: "Recording stopped because of an error. The parts already recorded are saved — you can try to continue where it stopped.",
     noStorage: "This browser doesn't allow saving on the device (private browsing?), so the podcast is made in memory only: it can't be paused and continued later. Keep this page open until it's done.",
     voiceStyle: "Voice & style", change: "Change", done: "Close", close: "Close",
     share: "Share / Save to Files", shareFail: "Sharing failed", playSample: "Play a sample of {name}",
@@ -155,8 +215,68 @@ const I18N = {
     lockWarn: "<b>Don't lock the screen or switch apps</b> until the podcast is ready — the screen is kept awake while it records.",
     lockWarnNoWake: "<b>Don't lock the screen or switch apps</b> until the podcast is ready. This browser can't keep the screen awake, so tap the screen now and then.",
     lockEtaMin: "Estimated recording time: at least ~{min} min.", lockEtaLen: "Estimated podcast length: ~{len}. Recording takes a few minutes.",
-    stalledText: "Recording stopped when the screen locked or you switched apps.",
     infoFree: "✓ Free", infoMulti: "⏳ Several days", infoPaid: "💳 Paid", infoLen: "~{len}",
+    // ---- messages produced outside app.js (job.js, research.js, gemini.js, audio.js): {key, ...values}
+    secUnit: "s", errDetails: "Technical details",
+    p_researchDeep: "Researching your focus in depth…",
+    p_writeScript: "Writing the script: part {n} of {total}",
+    p_writeTwoHost: "Writing the two-host script: part {n} of {total}",
+    p_recording: "Recording voice: part {n} of {total}",
+    p_recordingReused: "Recording voice: part {n} of {total} ({reused} reused, no quota used)",
+    p_mastering: "Mastering audio (warmth EQ, loudness)",
+    p_encoding: "Encoding MP3",
+    p_waitMinute: "Staying within the free tier: waiting {s}s for the per-minute limit",
+    p_waitOffline: "You are offline: waiting for the connection to come back",
+    w_best1: "Part {n}: kept the only take (problem: {problems}).",
+    w_best: "Part {n}: kept the best of {takes} takes (problem: {problems}).",
+    w_earlier: "Part {n}: kept an earlier take, no quota left for a retake (problem: {problems}).",
+    w_reused1: "Reused 1 recording from an earlier podcast, no quota used.",
+    w_reused: "Reused {count} recordings from earlier podcasts, no quota used.",
+    w_deepOff: "The deep-dive web search was unavailable, so the script uses the first research only.",
+    pr_short: "the recording was cut off: {got}s for ~{exp}s of text",
+    pr_long: "the recording is longer than expected: {got}s for ~{exp}s of text",
+    pr_dead: "a long silence of {secs}s",
+    e_unknown: "Something unexpected went wrong.",
+    e_stalled: "Recording stopped when the screen locked or you switched apps.",
+    e_badKey: "Google rejected the API key.",
+    e_listModels: "Couldn't get the model list from Gemini (error {status}).",
+    e_noTts: "This key has no access to a free voice model.",
+    e_noText: "This key has no text model available for writing the script.",
+    e_noSearch: "This key has no model with free Google Search.",
+    e_timeout: "Gemini did not answer within {s} seconds.",
+    e_network: "There was a network problem talking to Gemini.",
+    e_unreadable: "Gemini sent an answer that can't be read.",
+    e_rate: "Too many requests were sent to Gemini in a short time.",
+    e_server: "Gemini's server had a problem (error {status}).",
+    e_http: "Gemini returned error {status}.",
+    e_noAudio: "Gemini returned no audio for this passage.",
+    e_contentFilter: "Gemini refused to voice this passage (content filter).",
+    e_emptyScript: "Gemini returned an empty script.",
+    e_searchEmpty: "Google Search came back empty.",
+    e_quotaDay: "Today's free Gemini quota ({n} requests) is used up.",
+    e_quotaGoogle: "Google says today's free quota for this model is used up ({n} requests/day).",
+    e_retakeLater: "Today's quota is needed for the rest of the podcast, so the retake will be made after the reset.",
+    e_emptyText: "The text is empty after cleanup.",
+    e_badDialogue: "The script writer returned a dialogue that can't be used.",
+    e_tooLittle: "The script writer returned too little text.",
+    e_researchFormat: "The research came back in an unexpected format.",
+    e_noSources: "Couldn't find sources for this topic.",
+    e_needTopic: "Write a topic first.",
+    e_neverTruncated: "Part {n}: the voice engine keeps cutting this passage short, so it was not recorded completely.",
+    e_usedRetakes: "Part {n}: this passage used up the retakes it is allowed for now.",
+    e_storageBlocked: "The browser's storage is blocked by another tab.",
+    e_storageFull: "There isn't enough storage space on the device.",
+    e_encoder: "MP3 encoding failed.",
+    s_key: "Check the key in Settings.",
+    s_retry: "Try again.",
+    s_retryWait: "Wait a minute and try again.",
+    s_edit: "Edit that passage and try again.",
+    s_online: "Check your internet connection and try again.",
+    s_resume: "Tap \"Continue\" to try again, or pick another voice.",
+    s_reset: "You can continue after the quota resets.",
+    s_space: "Free some space on the device and try again.",
+    s_tabs: "Close other tabs of this site and try again.",
+    s_keepOpen: "Keep the screen on and tap \"Continue\".",
   },
 };
 const DESC_HE = {
@@ -221,6 +341,79 @@ const safeUrl = (u) => /^https?:\/\//i.test(u || "");
 const t = (k) => I18N[state.ui][k] ?? k;
 const fmt = (s, v) => s.replace(/\{(\w+)\}/g, (_, k) => v[k] ?? "");
 const key = readKey;
+
+// ---------------------------------------------------------------- messages from the other modules
+// job.js, research.js, gemini.js and audio.js never produce UI text: they report a message
+// { key, ...values } (progress stages, warnings, error `msg`) and this file renders it in the current
+// language from the I18N table. Latin names and numbers go into <bdi> so Hebrew punctuation stays put.
+const textNode = (s) => document.createTextNode(s);
+function bdiNode(v) { const b = document.createElement("bdi"); b.textContent = String(v); return b; }
+function msgNodes(m) {
+  if (m == null) return [];
+  if (typeof m === "string") return [textNode(m)];                       // an old job saved plain text
+  if (Array.isArray(m)) return m.flatMap((x, i) => (i ? [textNode("; "), ...msgNodes(x)] : msgNodes(x)));
+  const key = m.code ? `pr_${m.code}` : m.key === "w_best" && m.takes < 2 ? "w_best1"
+    : m.key === "w_reused" && m.count < 2 ? "w_reused1" : m.key;
+  const tpl = I18N[state.ui][key];
+  if (tpl == null) return [textNode(String(key))];
+  return tpl.split(/(\{\w+\}|<bdi>.*?<\/bdi>)/).filter(Boolean).flatMap((part) => {
+    const ph = part.match(/^\{(\w+)\}$/);
+    if (ph) {
+      const v = m[ph[1]];
+      return v == null ? [] : typeof v === "object" ? msgNodes(v) : [bdiNode(v)];
+    }
+    const lit = part.match(/^<bdi>(.*)<\/bdi>$/);
+    return [lit ? bdiNode(lit[1]) : textNode(part)];
+  });
+}
+// The short next step for an error (Hebrew/English text lives in the table as s_*).
+const STEP_OF = {
+  e_badKey: "s_key", e_noTts: "s_key", e_noText: "s_key", e_noSearch: "s_key",
+  e_network: "s_online", e_timeout: "s_online", e_rate: "s_retryWait",
+  e_contentFilter: "s_edit", e_emptyText: "s_edit", e_neverTruncated: "s_resume", e_usedRetakes: "s_resume",
+  e_quotaDay: "s_reset", e_quotaGoogle: "s_reset", e_retakeLater: "s_reset",
+  e_storageFull: "s_space", e_storageBlocked: "s_tabs", e_stalled: "s_keepOpen",
+};
+/** An error (thrown, or saved on a job as { msg, raw }) as { msg: {key,...}, raw: "technical text" }. */
+function errInfo(e) {
+  if (e && typeof e === "object" && e.msg && e.raw !== undefined && !(e instanceof Error)) return e;
+  if (typeof e === "string") return { msg: { key: "e_unknown" }, raw: e };
+  const msg = e?.msg || (e?.name === "QuotaExceededError" ? { key: "e_storageFull" } : { key: "e_unknown" });
+  return { msg, raw: e?.message || String(e ?? "") };
+}
+/** Shows an error in `el`: the message in the current language, a short next step, and the raw
+ *  technical text in a collapsed <details> (textContent only) so it can still be copied. */
+function fillError(el, e, prefix = "") {
+  const info = errInfo(e);
+  el._err = { e, prefix };
+  const head = document.createElement("span");
+  head.className = "err-msg";
+  if (prefix) head.append(textNode(prefix + " "));
+  head.append(...msgNodes(info.msg));
+  const step = document.createElement("div");
+  step.className = "err-step";
+  step.append(...msgNodes({ key: STEP_OF[info.msg.key] || "s_retry" }));
+  const kids = [head, step];
+  if (info.raw) {
+    const d = document.createElement("details"), sm = document.createElement("summary"), pre = document.createElement("pre");
+    d.className = "err-details";
+    sm.textContent = t("errDetails");
+    pre.textContent = info.raw; pre.dir = "ltr";
+    d.append(sm, pre);
+    kids.push(d);
+  }
+  el.replaceChildren(...kids);
+}
+/** After a language switch: redraw the messages that are on screen (progress stage, errors, warnings). */
+function refreshMessages() {
+  for (const n of document.querySelectorAll(".err-msg")) {
+    const el = n.parentElement;
+    if (el?._err) fillError(el, el._err.e, el._err.prefix);
+  }
+  if (state.busy && state.stage) $("stage").replaceChildren(...msgNodes(state.stage));
+  if (!$("result").hidden && state.job) renderWarnings(state.job);
+  if (!$("paused").hidden && state.job) showPaused(state.job, false);
+}
 const intOrNull = (v) => { const n = parseInt(v, 10); return n > 0 ? n : null; };
 
 function freeOpts() {
@@ -264,7 +457,7 @@ function applyUI() {
     };
     chips.appendChild(b);
   }
-  $("keyCard").hidden = !!key();
+  $("keyCard").hidden = !!key() && !state.keyBad;      // a key that failed the check stays visible with its message
   setSeg("srcSeg", state.src); setSeg("langSeg", state.lang); setSeg("modeSeg", state.mode); setSeg("paceSeg", state.pace);
   $("topicCard").hidden = state.src !== "topic";
   $("textCard").hidden = state.src === "topic";
@@ -274,6 +467,7 @@ function applyUI() {
   renderVoices();
   updateHint();
   onTextChange();
+  refreshMessages();
 }
 
 function renderVoiceGrid(container, k) {
@@ -371,6 +565,7 @@ function renderFree(f) {
   state.free = f;
   if (!f) { el.hidden = true; return; }
   const tts = f.buckets.gemini_tts, txt = f.buckets.gemini_text, web = f.buckets.gemini_search;
+  if (!tts) { el.hidden = true; return; }       // nothing left to record (all parts already made): no badge
   // `html` is a template from the I18N table with {placeholders} filled in by richNodes (no innerHTML).
   let cls = "ok", html;
   if (f.status === "paid") { cls = "bad"; html = t("fPaid"); }
@@ -451,6 +646,11 @@ function topicStatus(msg, isError = false) {
   el.textContent = msg || "";
   el.classList.toggle("error", isError);
 }
+function topicError(e) {
+  const el = $("researchStatus");
+  el.hidden = false; el.classList.add("error");
+  fillError(el, e);
+}
 
 function renderResearch() {
   const r = state.research;
@@ -501,7 +701,7 @@ async function findSources() {
   topicStatus(t("researching"));
   try {
     const g = gemini();
-    g.gate.onWait = (s) => topicStatus(`${t("researching")} (${Math.round(s)}s)`);
+    g.gate.onWait = (s, why) => topicStatus(why === "offline" ? t("p_waitOffline") : `${t("researching")} (${Math.round(s)} ${t("secUnit")})`);
     const r = await research(topic, state.lang, g);
     const oldTitle = state.research?.title;
     state.research = r;
@@ -514,8 +714,8 @@ async function findSources() {
     topicStatus("");
     renderResearch();
   } catch (e) {
-    topicStatus(e instanceof QuotaExhausted ? fmt(t("pausedText"), { reset: resetTime(e.resetAt.toISOString()) })
-      : e.message || String(e), true);
+    if (e instanceof QuotaExhausted) topicStatus(fmt(t("pausedText"), { reset: resetTime(e.resetAt.toISOString()) }), true);
+    else topicError(e);
   } finally {
     state.researching = false;
     $("researchBtn").disabled = false;
@@ -572,13 +772,13 @@ function preview(v, btn) {
   voiceMsg("");
   if (wasPlaying) return;                                  // second tap = stop
   if (readySamples.has(`${state.lang}/${v.id}`)) {   // shipped sample: no key, no quota
-    return playPreview(`previews/${state.lang}/${v.id}.mp3`, btn).catch((e) => voiceMsg(`${t("previewFail")}: ${e.message}`, true));
+    return playPreview(`previews/${state.lang}/${v.id}.mp3`, btn).catch((e) => voiceErr(e));
   }
   if (!key()) return voiceMsg(t("needKey"), true);
   if (freeOpts().billing && freeOpts().freeOnly) return voiceMsg(t("paidBlocked"), true);
   const ck = [v.id, state.lang, state.style, state.pace].join("|");
   const cached = previewCache.get(ck);
-  if (cached) return playPreview(cached, btn).catch((e) => voiceMsg(`${t("previewFail")}: ${e.message}`, true));
+  if (cached) return playPreview(cached, btn).catch((e) => voiceErr(e));
   // Unlock the shared player while we are still inside the tap.
   previewEl.src = SILENCE_URL;
   previewEl.play().catch(() => {});
@@ -608,7 +808,7 @@ function preview(v, btn) {
     await playPreview(url, btn);
   })().catch((e) => {
     if (seq === previewSeq) btn.textContent = "▶";
-    voiceMsg(`${t("previewFail")}: ${e.message}`, true);
+    voiceErr(e);
   });
 }
 
@@ -617,7 +817,13 @@ function voiceMsg(msg, isError = false) {
   const el = $("voiceMsg");
   el.hidden = !msg; el.textContent = msg || ""; el.classList.toggle("bad", isError);
 }
+function voiceErr(e) {
+  const el = $("voiceMsg");
+  el.hidden = false; el.classList.add("bad");
+  fillError(el, e, t("previewFail") + ":");
+}
 function showError(msg) { $("error").hidden = !msg; $("error").textContent = msg || ""; }
+function showErr(e) { $("error").hidden = false; fillError($("error"), e); }
 function fmtSize(b) { return b > 1048576 ? (b / 1048576).toFixed(1) + " MB" : Math.round(b / 1024) + " KB"; }
 
 let wakeLock = null;
@@ -691,7 +897,7 @@ async function generate() {
 async function run(job) {
   state.job = job; state.busy = true; state.cancel = false; state.t0 = Date.now();
   $("result").hidden = true; $("paused").hidden = true;
-  $("progress").hidden = false; $("stage").textContent = t("starting"); $("barFill").style.width = "1%";
+  $("progress").hidden = false; state.stage = { key: "starting" }; $("stage").replaceChildren(...msgNodes(state.stage)); $("barFill").style.width = "1%";
   $("bar").setAttribute("aria-valuenow", 1);
   state.stalled = false; state.lastProgress = Date.now(); renderLockNote();
   updateHint();
@@ -703,7 +909,7 @@ async function run(job) {
       state.lastProgress = Date.now();
       if (p != null) $("bar").setAttribute("aria-valuenow", Math.round(p * 100));
       if (p != null) { $("barFill").style.width = Math.max(1, p * 100) + "%"; $("pct").textContent = Math.round(p * 100) + "%"; }
-      if (stage) $("stage").textContent = stage;
+      if (stage) { state.stage = stage; $("stage").replaceChildren(...msgNodes(stage)); }
     },
     cancelled: () => state.cancel,
   };
@@ -718,15 +924,16 @@ async function run(job) {
       job.status = "paused"; job.resumeAt = e.resetAt.toISOString();
       showPaused(job);
     } else if (e instanceof Cancelled && state.stalled) {
-      job.status = "error"; job.error = t("stalledText");
+      job.status = "error"; job.error = { msg: { key: "e_stalled" }, raw: "" };
       showPaused(job);
     } else if (e instanceof Cancelled) {
       job.status = "cancelled"; showError(t("cancelled"));
     } else if (job.status === "done") {
-      showError(e.message || String(e));       // the MP3 is already saved; never re-record a finished job
+      showErr(e);                              // the MP3 is already saved; never re-record a finished job
     } else {
       // Recorded parts are kept, so a failed job can be continued like a paused one.
-      job.status = "error"; job.error = e.message || String(e);
+      const { msg, raw } = errInfo(e);
+      job.status = "error"; job.error = { msg, raw };
       showPaused(job);
     }
     await A.store.saveJob(job).catch(() => {});
@@ -740,11 +947,13 @@ async function run(job) {
   }
 }
 
-function showPaused(job) {
+function showPaused(job, scroll = true) {
   $("pausedText").textContent = job.status === "paused" ? fmt(t("pausedText"), { reset: resetTime(job.resumeAt) })
-    : job.status === "error" ? fmt(t("errorText"), { error: job.error || "?" }) : t("interruptedText");
+    : job.status === "error" ? t("errorText") : t("interruptedText");
+  $("pausedErr").hidden = job.status !== "error";
+  if (job.status === "error") fillError($("pausedErr"), job.error ?? "");
   $("paused").hidden = false;
-  $("paused").scrollIntoView({ behavior: "smooth", block: "nearest" });
+  if (scroll) $("paused").scrollIntoView({ behavior: "smooth", block: "nearest" });
 }
 const RESUMABLE = new Set(["paused", "running", "error"]);    // "running" = the page was closed mid-way
 /** A job loaded from storage that can be continued (written by this or an older version of the app). */
@@ -754,6 +963,15 @@ function resumableJob(job) {
     (typeof r.text === "string" || r.topic) && ["he", "en"].includes(r.language) &&
     ["narrator", "conversation"].includes(r.mode) && typeof r.voice === "string" &&
     (job.script == null || Array.isArray(job.script)) && Array.isArray(job.warnings ||= []));
+}
+
+const HOST_HE = { Noa: "נועה", Maya: "מאיה", Yoni: "יוני", Avi: "אבי" };
+function renderWarnings(job) {
+  $("warnings").replaceChildren(...(job.warnings || []).map((w) => {
+    const d = document.createElement("div");
+    d.append(...msgNodes(w));
+    return d;
+  }));
 }
 
 async function showResult(job, blob) {
@@ -771,14 +989,19 @@ async function showResult(job, blob) {
   $("download").download = `${safe}.mp3`;
   setupShare(blob, `${safe}.mp3`);
   store.set("genDone", "1");
-  $("warnings").textContent = (job.warnings || []).join(" · ");
+  renderWarnings(job);
   const lines = job.script || job.narration;
   $("showScript").hidden = !lines;
   $("script").hidden = true;
   $("script").innerHTML = "";
   for (const line of lines || []) {
     const p = document.createElement("p");
-    if (line.speaker) { const b = document.createElement("b"); b.textContent = line.speaker + ": "; p.append(b); }
+    if (line.speaker) {
+      // Hebrew scripts keep Latin host names for the voice engine (stable multi-speaker labels); show them in Hebrew.
+      const b = document.createElement("b");
+      b.textContent = (job.request.language === "he" && HOST_HE[line.speaker] || line.speaker) + ": ";
+      p.append(b);
+    }
     p.append(document.createTextNode(line.text));
     $("script").appendChild(p);
   }
@@ -814,7 +1037,7 @@ $("share").addEventListener("click", async () => {
   try { await navigator.share({ files: [shareFile], title: shareFile.name.replace(/\.mp3$/, "") }); }
   catch (e) {
     if (e.name === "AbortError") return;               // the person closed the sheet
-    $("shareMsg").hidden = false; $("shareMsg").textContent = `${t("shareFail")}: ${e.message}`;
+    $("shareMsg").hidden = false; fillError($("shareMsg"), e, t("shareFail") + ":");
   }
 });
 
@@ -924,13 +1147,18 @@ async function saveKey(value) {
   value = value.trim();
   writeKey(value);
   if (!value) { applyUI(); return; }
+  state.keyBad = false;
   $("keyMsg").textContent = t("keyChecking");
   try {
     await new Gemini(value).models();     // free call: listing models doesn't use any quota
     $("keyMsg").textContent = t("keyOk");
     setTimeout(applyUI, 900);
   } catch (e) {
-    $("keyMsg").textContent = "✗ " + e.message;
+    state.keyBad = true;
+    applyUI();                            // show the key card again, so the person sees why it failed
+    $("keyInput").value = value;
+    fillError($("keyMsg"), e, "✗");
+    $("keyCard").scrollIntoView({ block: "nearest" });
   }
 }
 $("keySave").addEventListener("click", () => saveKey($("keyInput").value));

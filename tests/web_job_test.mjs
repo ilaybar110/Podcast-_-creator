@@ -55,7 +55,8 @@ function fakeGemini({ freeOnly = true, take = () => 1, write = null, rpd = null 
   };
 }
 let lineNo = 0;      // every written line is unique, so the recordings cache never answers for a different line
-const ui = { progress() {}, cancelled: () => false };
+const stages = [];
+const ui = { progress(p, stage) { if (stage) stages.push(stage); }, cancelled: () => false };
 const sentence = (i) => `This is sentence number ${i} about memory. `;
 let n = 0;
 function newJob(text, mode = "narrator") {
@@ -84,12 +85,16 @@ g = fakeGemini({ take: () => 3 });
 job = newJob([1, 2].map(sentence).join(""));
 await runJob(job, g, ui);
 assert.equal(g.calls.tts, 1);
-assert.match(job.warnings.join(" "), /kept best of 1 take .*too long/);
+// warnings are messages (key + values), rendered in the UI language by app.js
+assert.equal(job.warnings.length, 1);
+assert.equal(job.warnings[0].key, "w_best");
+assert.equal(job.warnings[0].takes, 1);
+assert.deepEqual(job.warnings[0].problems.map((p) => p.code), ["long"]);
 
 // free-only: a passage that is always cut off stops within the per-part budget
 g = fakeGemini({ take: () => 0.2 });
 job = newJob([1, 2, 3, 4, 5, 6, 7, 8].map(sentence).join("").slice(0, 190));
-await assert.rejects(runJob(job, g, ui), (e) => e instanceof ProviderError && !(e instanceof QuotaExhausted) && /cutting/.test(e.message));
+await assert.rejects(runJob(job, g, ui), (e) => e instanceof ProviderError && !(e instanceof QuotaExhausted) && e.msg?.key === "e_neverTruncated" && e.msg.n === 1 && /cutting/.test(e.message));
 assert.ok(g.calls.tts <= 6, `used ${g.calls.tts} requests`);
 
 // free-only: retakes never eat the requests the other parts still need today -> pause instead
@@ -103,7 +108,7 @@ g = fakeGemini({ freeOnly: false, take: (txt, i) => (i === 0 ? 3 : new QuotaExha
 job = newJob([1, 2].map(sentence).join(""));
 await runJob(job, g, ui);
 assert.equal(job.status, "done");
-assert.match(job.warnings.join(" "), /kept an earlier take/);
+assert.deepEqual(job.warnings.map((w) => w.key), ["w_earlier"]);
 // ...but a cut-off take is not kept: the job pauses
 g = fakeGemini({ freeOnly: false, take: (txt, i) => (i === 0 ? 0.2 : new QuotaExhausted("none left", new Date())) });
 await assert.rejects(runJob(newJob([1, 2].map(sentence).join("")), g, ui), QuotaExhausted);
@@ -164,7 +169,7 @@ const res2 = await runJob(job2, g, ui);
 assert.notEqual(job2.id, job.id);
 assert.equal(g.calls.tts, 0, "a cache hit makes no request");
 assert.equal(res2.reused, first);
-assert.match(job2.warnings.join(" "), new RegExp(`Reused ${first} recordings.*no quota used`));
+assert.deepEqual(job2.warnings.filter((w) => w.key === "w_reused").map((w) => w.count), [first]);
 assert.equal(job2.status, "done");
 assert.ok((await A.store.getPart(job2.id, "mp3")).size > 0, "the podcast is complete");
 // planParts sees them as cached; a different voice or style is a different recording

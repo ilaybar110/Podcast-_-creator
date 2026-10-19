@@ -72,15 +72,15 @@ export function takeProblems(pcm, text, language) {
   const problems = [];
   const duration = pcm.length / SAMPLE_RATE;
   const expected = text.length / (CHARS_PER_SECOND[language] || 14);
-  if (duration < 0.4 * expected) problems.push(`too short (${duration.toFixed(1)}s for ~${Math.round(expected)}s of text) - likely truncated`);
-  if (expected > 3 && duration > 2.6 * expected) problems.push(`too long (${duration.toFixed(1)}s for ~${Math.round(expected)}s of text)`);
+  if (duration < 0.4 * expected) problems.push({ code: "short", got: +duration.toFixed(1), exp: Math.round(expected) });   // likely truncated
+  if (expected > 3 && duration > 2.6 * expected) problems.push({ code: "long", got: +duration.toFixed(1), exp: Math.round(expected) });
   if (duration > 8) {
     const db = frameDb(pcm, SAMPLE_RATE * 0.01);
     const sorted = Float32Array.from(db).sort();
     const floor = sorted[Math.floor(sorted.length * 0.9)] - 30;
     let run = 0, longest = 0;
     for (const v of db) { run = v < floor ? run + 1 : 0; longest = Math.max(longest, run); }
-    if (longest * 0.01 > 4) problems.push(`dead air of ${(longest * 0.01).toFixed(1)}s`);
+    if (longest * 0.01 > 4) problems.push({ code: "dead", secs: +(longest * 0.01).toFixed(1) });
   }
   return problems;
 }
@@ -164,7 +164,7 @@ export function startEncoder(kbps = 96) {
     finish() {
       return new Promise((resolve, reject) => {
         worker.onmessage = (e) => { worker.terminate(); resolve(new Blob(e.data.parts, { type: "audio/mpeg" })); };
-        worker.onerror = (e) => { worker.terminate(); reject(new Error(e.message || "MP3 encoder failed")); };
+        worker.onerror = (e) => { worker.terminate(); reject(Object.assign(new Error(e.message || "MP3 encoder failed"), { msg: { key: "e_encoder" } })); };
         worker.postMessage({ cmd: "end" });
       });
     },
@@ -192,7 +192,7 @@ function db() {
       resolve(d);
     };
     req.onerror = () => reject(req.error);
-    req.onblocked = () => reject(new Error("The browser's storage is blocked by another tab."));
+    req.onblocked = () => reject(Object.assign(new Error("The browser's storage is blocked by another tab."), { msg: { key: "e_storageBlocked" } }));
   }).catch((e) => { dbP = null; throw e; });
   return dbP;
 }
@@ -203,7 +203,7 @@ async function tx(store, mode, fn) {
     const req = fn(t.objectStore(store));
     t.oncomplete = () => resolve(req?.result);
     t.onerror = () => reject(t.error);
-    t.onabort = () => reject(t.error || new Error("Storage write was aborted (the device may be out of space)."));
+    t.onabort = () => reject(t.error || Object.assign(new Error("Storage write was aborted (the device may be out of space)."), { msg: { key: "e_storageFull" } }));
   });
 }
 const memory = { jobs: new Map(), parts: new Map(), cache: new Map(), cacheIdx: new Map() };

@@ -31,9 +31,13 @@ export const VOICES = [
   ["Alnilam", "male", "Firm", false], ["Schedar", "male", "Even", false],
 ].map(([id, gender, description, recommended]) => ({ id, name: id, gender, description, recommended }));
 
+// Every user-visible message is a key plus values - `msg: { key, ...values }` - that the UI turns into
+// text in the current language (app.js, table I18N). `message` stays a plain English sentence for logs
+// and for the "technical details" the person can copy.
 export class ProviderError extends Error {
-  constructor(message, { retryable = false, retryAfter = null, signal = null } = {}) {
+  constructor(message, { retryable = false, retryAfter = null, signal = null, msg = null } = {}) {
     super(message);
+    this.msg = msg;           // { key, ...values } or null (unknown error: the UI shows a generic text)
     this.retryable = retryable;
     this.retryAfter = retryAfter;
     this.signal = signal;     // the client's cancel signal, so a retry wait stops on Cancel
@@ -41,8 +45,8 @@ export class ProviderError extends Error {
 }
 
 export class QuotaExhausted extends ProviderError {
-  constructor(message, resetAt) {
-    super(message);
+  constructor(message, resetAt, msg = null) {
+    super(message, { msg });
     this.resetAt = resetAt;
   }
 }
@@ -58,6 +62,14 @@ export function sleep(ms, signal = null) {
     const t = setTimeout(done, ms);
     signal?.addEventListener("abort", stop, { once: true });
   });
+}
+
+/** The message key for an HTTP failure: a rejected key, rate limit, server fault or anything else. */
+function httpMsg(status, fallbackKey, text = "") {
+  if (status === 401 || status === 403 || (status === 400 && /api key/i.test(text))) return { key: "e_badKey" };
+  if (status === 429) return { key: "e_rate" };
+  if (status >= 500) return { key: "e_server", status };
+  return { key: fallbackKey, status };
 }
 
 const isOffline = () => globalThis.navigator?.onLine === false;
@@ -192,7 +204,7 @@ export class Gate {
     if (!this.freeOnly) return this.ledger.record(kid, bucket, tokens);
     const lim = this.ledger.limits(kid, bucket, this.overrides[bucket]);
     if (this.ledger.used(kid, bucket) >= lim.rpd) {
-      throw new QuotaExhausted(`Today's free Gemini quota (${lim.rpd} requests) is used up.`, nextReset());
+      throw new QuotaExhausted(`Today's free Gemini quota (${lim.rpd} requests) is used up.`, nextReset(), { key: "e_quotaDay", n: lim.rpd });
     }
     for (;;) {
       const q = this.ledger.window(kid, bucket);
@@ -213,7 +225,8 @@ export class Gate {
         const value = parseInt(v.quotaValue, 10) || 0;
         if (qid.includes("PerDay")) {
           this.ledger.markExhausted(kid, bucket, value || null);
-          return new QuotaExhausted(`Google says today's free quota for this model is used up (${value || "?"} requests/day).`, nextReset());
+          return new QuotaExhausted(`Google says today's free quota for this model is used up (${value || "?"} requests/day).`, nextReset(),
+            { key: "e_quotaGoogle", n: value || "?" });
         }
         if (qid.includes("PerMinute") && value) this.ledger.learn(kid, bucket, qid.includes("Token") ? "tpm" : "rpm", value);
       }
@@ -304,8 +317,8 @@ export class Gemini {
       return { r, body };
     } catch (e) {
       const err = this.signal.aborted ? new Cancelled()
-        : timedOut ? this._error(`Gemini did not answer within ${Math.round(timeoutMs / 1000)}s`, { retryable: true })
-          : this._error(`Network error talking to Gemini: ${e.message}`, { retryable: true });
+        : timedOut ? this._error(`Gemini did not answer within ${Math.round(timeoutMs / 1000)}s`, { retryable: true, msg: { key: "e_timeout", s: Math.round(timeoutMs / 1000) } })
+          : this._error(`Network error talking to Gemini: ${e.message}`, { retryable: true, msg: { key: "e_network" } });
       err.noResponse = !r;
       throw err;
     } finally {
@@ -328,8 +341,8 @@ export class Gemini {
       await this._online();
       const { r, body: d } = await this._fetch(`${API}/models?pageSize=1000${token ? "&pageToken=" + token : ""}`,
         { headers: { "x-goog-api-key": this.apiKey } }, this.timeouts.text);
-      if ([400, 401, 403].includes(r.status)) throw this._error("Gemini rejected the API key. Check it in Settings.");
-      if (!r.ok || !d) throw this._error(`Gemini ${r.status} while listing models`, { retryable: [429, 500, 502, 503, 504].includes(r.status) });
+      if ([400, 401, 403].includes(r.status)) throw this._error("Gemini rejected the API key. Check it in Settings.", { msg: { key: "e_badKey" } });
+      if (!r.ok || !d) throw this._error(`Gemini ${r.status} while listing models`, { retryable: [429, 500, 502, 503, 504].includes(r.status), msg: httpMsg(r.status, "e_listModels") });
       names = names.concat((d.models || []).filter((m) => (m.supportedGenerationMethods || []).includes("generateContent"))
         .map((m) => m.name.split("/").slice(1).join("/")));
       token = d.nextPageToken;
@@ -344,7 +357,7 @@ export class Gemini {
   async ttsModel() {
     const names = this._free(await this.models());
     const m = TTS_PREF.find((p) => names.includes(p)) || names.filter((n) => n.includes("tts")).sort().reverse()[0];
-    if (!m) throw new ProviderError("This Gemini API key has no access to a free TTS model.");
+    if (!m) throw new ProviderError("This Gemini API key has no access to a free TTS model.", { msg: { key: "e_noTts" } });
     return m;
   }
 
@@ -352,7 +365,7 @@ export class Gemini {
     const names = this._free(await this.models());
     const m = TEXT_PREF.find((p) => names.includes(p)) ||
       names.filter((n) => n.startsWith("gemini") && !/tts|image|embedding|live|audio|vision|thinking-exp/.test(n)).sort().reverse()[0];
-    if (!m) throw new ProviderError("No Gemini text model available for writing the podcast script.");
+    if (!m) throw new ProviderError("No Gemini text model available for writing the podcast script.", { msg: { key: "e_noText" } });
     return m;
   }
 
@@ -379,7 +392,7 @@ export class Gemini {
       throw e;
     }
     if (r.ok) {
-      if (!data) throw this._error("Gemini sent an unreadable answer", { retryable: true });
+      if (!data) throw this._error("Gemini sent an unreadable answer", { retryable: true, msg: { key: "e_unreadable" } });
       return data;
     }
     const err = data || {};
@@ -390,7 +403,8 @@ export class Gemini {
     }
     const delay = (err.error?.details || []).map((d) => d.retryDelay).find(Boolean);
     throw Object.assign(this._error(`Gemini ${r.status}: ${err.error?.message || r.statusText}`, {
-      retryable: [429, 500, 502, 503, 504].includes(r.status), retryAfter: delay ? parseFloat(delay) : null }),
+      retryable: [429, 500, 502, 503, 504].includes(r.status), retryAfter: delay ? parseFloat(delay) : null,
+      msg: httpMsg(r.status, "e_http", err.error?.message) }),
     { refunded: r.status >= 500 });
   }
 
@@ -414,7 +428,7 @@ export class Gemini {
       const reason = data.candidates?.[0]?.finishReason || data.promptFeedback?.blockReason || "no audio";
       const blocked = BLOCK.has(reason);
       throw this._error(blocked ? "Gemini refused to voice this passage (content filter)" : `Gemini returned no audio (${reason})`,
-        { retryable: !blocked });
+        { retryable: !blocked, msg: blocked ? { key: "e_contentFilter" } : { key: "e_noAudio" } });
     }
     const rate = parseInt((audio[0].mimeType || "").match(/rate=(\d+)/)?.[1] || "24000", 10);
     const pcm = audio.map((a) => b64ToInt16(a.data));
@@ -443,14 +457,14 @@ export class Gemini {
     const data = await this.generate(await this.textModel(), {
       contents: [{ role: "user", parts: [{ text: prompt }] }], generationConfig: { temperature: 0.9 } });
     const text = (data.candidates?.[0]?.content?.parts || []).filter((p) => !p.thought).map((p) => p.text || "").join("");
-    if (!text.trim()) throw this._error("Gemini returned an empty script", { retryable: true });
+    if (!text.trim()) throw this._error("Gemini returned an empty script", { retryable: true, msg: { key: "e_emptyScript" } });
     return text;
   }
 
   /** One request with Grounding with Google Search: returns the answer and the web pages it used. */
   async searchText(prompt) {
     const model = await this.searchModel();
-    if (!model) throw new ProviderError("This key has no model with free Google Search.");
+    if (!model) throw new ProviderError("This key has no model with free Google Search.", { msg: { key: "e_noSearch" } });
     // Google also counts a search request against its model's own daily limit.
     const alsoText = model === await this.textModel().catch(() => null);
     if (alsoText) await this.gate.acquire("gemini_text", estimateTokens(prompt));
@@ -464,7 +478,7 @@ export class Gemini {
     }
     const cand = data.candidates?.[0] || {};
     const text = (cand.content?.parts || []).filter((p) => !p.thought).map((p) => p.text || "").join("");
-    if (!text.trim()) throw this._error("Google Search research came back empty", { retryable: true });
+    if (!text.trim()) throw this._error("Google Search research came back empty", { retryable: true, msg: { key: "e_searchEmpty" } });
     const meta = cand.groundingMetadata || cand.grounding_metadata || {};
     const sources = (meta.groundingChunks || meta.grounding_chunks || []).map((c) => c.web).filter((w) => w?.uri)
       .map((w) => ({ title: w.title || w.domain || w.uri, url: w.uri }));

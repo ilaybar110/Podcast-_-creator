@@ -56,9 +56,11 @@ for (const mode of ["narrator", "conversation"]) {
   const job = { warnings: [], request: { language: "en", mode, text: "",
     topic: { topic: "memory", notes: r.notes, sources: r.sources, focus: ["Angle 1 - About 1"], minutes: 20 } } };
   const opts = { hostNames: ["Noa", "Yoni"], genders: ["female", "male"] };
-  const ui = { progress() {} };
+  const stages = [], ui = { progress(p, s) { stages.push(s); } };
   await R.writeTopicScript(job, g, ui, opts, async (j) => saved.push(JSON.stringify(j)));
   assert.equal(g.calls.search, 1); assert.equal(g.calls.text, 2);
+  assert.deepEqual(stages.map((s) => s.key), ["p_researchDeep", "p_writeScript", "p_writeScript"]);   // progress is a message key + values
+  assert.deepEqual(stages[2], { key: "p_writeScript", n: 2, total: 2 });
   assert.ok(job.request.text.length > 100);
   assert.ok(!job.request.text.includes("[1]") && !job.request.text.includes("Part 1"));
   assert.equal(job.sources.length, 4);

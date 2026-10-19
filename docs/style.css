@@ -253,3 +253,11 @@ dialog .actions { flex-wrap: wrap; }
 .voice .star { color: #9a4416; }
 .gen-info .gi-ok { color: #1f7a4a; }
 @media (prefers-color-scheme: dark) { .voice .star { color: var(--accent); } .gen-info .gi-ok { color: #5fcf94; } .gen-info .gi-wait { color: #f0c04a; } }
+
+/* error messages: text in the UI language, a next step, and the raw technical text collapsed */
+.err-step { font-weight: 600; margin-top: 4px; }
+.err-details { margin-top: 8px; font-size: 13px; color: var(--muted); }
+.err-details summary { cursor: pointer; }
+.err-details pre { margin: 6px 0 0; white-space: pre-wrap; overflow-wrap: anywhere; font: 12px/1.4 ui-monospace, monospace; text-align: left; user-select: text; }
+#warnings > div + div { margin-top: 4px; }
+#pausedErr { margin: 12px 0; }
