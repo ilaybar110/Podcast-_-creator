@@ -537,3 +537,7 @@ def test_web_gemini_refunds_timeouts_and_cancel():
 
 def test_web_job_retakes_quota_and_resume():
     _run_node_test("web_job_test.mjs")
+
+
+def test_web_hebrew_speech_prep_matches_python():
+    _run_node_test("web_hebrew_test.mjs")

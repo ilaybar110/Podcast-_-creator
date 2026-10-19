@@ -16,6 +16,7 @@ from . import audio, quality, script_writer
 from .providers import Provider, ProviderError, SynthesisOptions, Turn, get_provider, with_retries
 from .budget import QuotaExhausted
 from .providers.gemini import GeminiProvider
+from .speech import prepare_for_speech
 from .text_utils import chunk_text, clean_text, format_duration, split_sentences
 
 log = logging.getLogger("podcast")
@@ -322,7 +323,7 @@ async def _narrator_segments(job, provider, text, opts, voice):
     async def worker(i, paras):
         if _part_path(job, i).exists():
             return _part_path(job, i)
-        return _save_part(job, i, await speak("\n\n".join(paras), f"Part {i + 1}"))
+        return _save_part(job, i, await speak(prepare_for_speech("\n\n".join(paras)), f"Part {i + 1}"))
 
     pcms = await _run_parallel(job, provider, chunks, worker, 0.02, 0.94)
     return [(p, CHUNK_PAUSE_SEC) for p in pcms]
@@ -366,7 +367,8 @@ async def _conversation_segments(job, provider, text, opts, v1, v2):
         async def worker(i, batch: list[Turn]):
             if _part_path(job, i).exists():
                 return _part_path(job, i)
-            return _save_part(job, i, await speak(batch, f"Part {i + 1}"))
+            spoken = [Turn(t.speaker, prepare_for_speech(t.text)) for t in batch]   # the shown script stays as written
+            return _save_part(job, i, await speak(spoken, f"Part {i + 1}"))
 
         pcms = await _run_parallel(job, provider, batches, worker, 0.28, 0.68)
         return [(p, TURN_GAP_SEC + 0.1) for p in pcms]
@@ -374,8 +376,9 @@ async def _conversation_segments(job, provider, text, opts, v1, v2):
     async def worker(i, turn: Turn):
         if _part_path(job, i).exists():
             return _part_path(job, i)
-        pcm, problems = await best_take(lambda: provider.synthesize(turn.text, voices[turn.speaker], opts),
-                                        turn.text, opts.language, job, f"Line {i + 1}")
+        said = prepare_for_speech(turn.text)
+        pcm, problems = await best_take(lambda: provider.synthesize(said, voices[turn.speaker], opts),
+                                        said, opts.language, job, f"Line {i + 1}")
         if _truncated(problems):
             raise _never_truncated(f"Line {i + 1}")
         return _save_part(job, i, pcm)
