@@ -2,9 +2,14 @@
  "style": "warm",
  "pace": "natural",
  "samples": [
+  "en/Sulafat",
   "he/Achird",
   "he/Algieba",
+  "he/Aoede",
+  "he/Gacrux",
+  "he/Sadaltager",
   "he/Sulafat",
+  "he/Umbriel",
   "he/Vindemiatrix"
  ]
 }
